@@ -40,6 +40,52 @@ def reply(chat_id, text):
     with urlopen(req, timeout=8) as response:
         response.read()
 
+BACKUP_PREFIX = "DEMO_BACKUP_V1:"
+SYNCED_CHATS = set()
+
+def telegram_api(method, data):
+    payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    request = Request("https://api.telegram.org/bot" + TOKEN + "/" + method,
+                      data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    with urlopen(request, timeout=10) as response:
+        result = json.load(response)
+    if not result.get("ok"):
+        raise RuntimeError("Telegram API rejected " + method)
+    return result["result"]
+
+def sync_from_telegram(chat_id):
+    if chat_id in SYNCED_CHATS:
+        return
+    chat_info = telegram_api("getChat", {"chat_id": chat_id})
+    pinned = chat_info.get("pinned_message") or {}
+    text = pinned.get("text", "")
+    if text.startswith(BACKUP_PREFIX):
+        snapshot = json.loads(text[len(BACKUP_PREFIX):])
+        if not isinstance(snapshot, list) or len(snapshot) > 20:
+            raise ValueError("Invalid backup")
+        restored = []
+        for entry in snapshot:
+            if not isinstance(entry, list) or len(entry) != 2 or not isinstance(entry[0], int) or not isinstance(entry[1], str) or len(entry[1]) > 60:
+                raise ValueError("Invalid backup entry")
+            restored.append(entry)
+        with db() as connection:
+            connection.execute("DELETE FROM accounts")
+            connection.executemany("INSERT INTO accounts(id, name) VALUES (?, ?)", restored)
+    SYNCED_CHATS.add(chat_id)
+
+def save_to_telegram(chat_id):
+    content = BACKUP_PREFIX + json.dumps([[i, n] for i, n in accounts()], ensure_ascii=False, separators=(",", ":"))
+    chat_info = telegram_api("getChat", {"chat_id": chat_id})
+    pinned = chat_info.get("pinned_message") or {}
+    if (pinned.get("text") or "").startswith(BACKUP_PREFIX):
+        try:
+            telegram_api("editMessageText", {"chat_id": chat_id, "message_id": pinned["message_id"], "text": content})
+            return
+        except Exception:
+            pass
+    sent = telegram_api("sendMessage", {"chat_id": chat_id, "text": content, "disable_notification": True})
+    telegram_api("pinChatMessage", {"chat_id": chat_id, "message_id": sent["message_id"], "disable_notification": True})
+
 def handle_update(update):
     message = update.get("message") or {}
     sender = message.get("from") or {}
@@ -57,7 +103,9 @@ def handle_update(update):
         "🗑 Очистить список": ("clear", "Для подтверждения напиши ОЧИСТИТЬ. Любое другое сообщение отменит очистку."),
     }
     with LOCK:
+        sync_from_telegram(chat_id)
         rows = accounts()
+        changed = False
         ids = {id for id, _ in rows}
         state = STATES.get(chat_id)
         if command == "/start":
@@ -99,6 +147,7 @@ def handle_update(update):
             else:
                 with db() as connection:
                     number = connection.execute("INSERT INTO accounts(name) VALUES (?)", (name,)).lastrowid
+                changed = True
                 STATES.pop(chat_id, None)
                 answer = "Добавлена тестовая запись №" + str(number) + ": " + name
         elif command == "/removedemo" or state == "delete":
@@ -108,6 +157,7 @@ def handle_update(update):
             else:
                 with db() as connection:
                     connection.execute("DELETE FROM accounts WHERE id=?", (int(value),))
+                changed = True
                 STATES.pop(chat_id, None)
                 answer = "Тестовая запись №" + value + " удалена."
         elif state == "rename_id":
@@ -122,6 +172,7 @@ def handle_update(update):
             else:
                 with db() as connection:
                     connection.execute("UPDATE accounts SET name=? WHERE id=?", (raw, state[1]))
+                changed = True
                 STATES.pop(chat_id, None)
                 answer = "Запись №" + str(state[1]) + " переименована: " + raw
         elif state == "search":
@@ -134,11 +185,14 @@ def handle_update(update):
             if raw == "ОЧИСТИТЬ":
                 with db() as connection:
                     connection.execute("DELETE FROM accounts")
+                changed = True
                 answer = "Все тестовые записи удалены."
             else:
                 answer = "Очистка отменена."
         else:
             answer = "Выбери действие в меню."
+        if changed:
+            save_to_telegram(chat_id)
     reply(chat_id, answer)
 
 class Handler(BaseHTTPRequestHandler):
