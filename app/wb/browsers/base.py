@@ -5,6 +5,8 @@ Afterwards all work happens over the plain HTTP API.
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -100,8 +102,12 @@ class AntiDetectBrowser:
     async def extract_session(
         self, origin: str = "https://whitebird.io"
     ) -> SessionTokens:
-        """Read the OAuth tokens from localStorage of the running profile."""
-        from playwright.async_api import async_playwright
+        """Read the OAuth tokens from localStorage of the running profile.
+
+        The tokens live in localStorage of the Whitebird web app, so we open
+        the page (if needed) and read them with a single CDP evaluate call.
+        """
+        from app.wb.browsers.cdp import CDPClient, CDPError
 
         ws_url = await self.start()
         if not ws_url:
@@ -111,36 +117,39 @@ class AntiDetectBrowser:
             )
 
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.connect_over_cdp(ws_url)
-                try:
-                    context = (
-                        browser.contexts[0]
-                        if browser.contexts
-                        else await browser.new_context()
-                    )
-                    page = None
-                    for candidate in context.pages:
-                        if origin in (candidate.url or ""):
-                            page = candidate
-                            break
-                    if page is None:
-                        page = await context.new_page()
-                        await page.goto(origin, wait_until="domcontentloaded")
+            async with CDPClient(ws_url, timeout=self.timeout) as cdp:
+                target_id = await self._pick_target(cdp, origin)
+                if target_id is None:
+                    target_id = await self._open_target(cdp, origin)
+                if target_id is None:
+                    raise CDPError("Could not open a page in the browser")
 
-                    raw = await page.evaluate(
-                        "(keys) => Object.fromEntries("
-                        "keys.map(k => [k, localStorage.getItem(k)]))",
-                        list(TOKEN_KEYS),
-                    )
-                finally:
-                    await browser.close()
+                attached = await cdp.send(
+                    "Target.attachToTarget", {"targetId": target_id, "flatten": True}
+                )
+                session_id = attached.get("sessionId")
+                if not session_id:
+                    raise CDPError("Could not attach to the browser page")
+
+                await cdp.send("Runtime.enable", {}, session_id=session_id)
+
+                raw = await cdp.evaluate(
+                    "JSON.stringify(Object.fromEntries("
+                    + json.dumps(list(TOKEN_KEYS))
+                    + ".map(k => [k, localStorage.getItem(k)])))",
+                    session_id=session_id,
+                )
+                if isinstance(raw, str):
+                    raw = json.loads(raw)
         except BrowserError:
             raise
         except Exception as exc:
             raise BrowserError(
                 f"Could not read the session from the browser: {exc}"
             ) from exc
+
+        if not isinstance(raw, dict):
+            raise BrowserError("Unexpected answer while reading localStorage")
 
         access = raw.get("access_token") or raw.get("accessToken")
         if not access:
@@ -161,3 +170,25 @@ class AntiDetectBrowser:
         return SessionTokens(
             access_token=access, refresh_token=refresh, expires_at=expires_at
         )
+
+    # ------------------------------------------------------------- helpers
+    async def _list_targets(self, cdp) -> list[dict]:
+        result = await cdp.send("Target.getTargets")
+        return list(result.get("targetInfos", []))
+
+    async def _pick_target(self, cdp, origin: str) -> str | None:
+        """Find an already open page of the site."""
+        for target in await self._list_targets(cdp):
+            if target.get("type") != "page":
+                continue
+            if origin in (target.get("url") or ""):
+                return target.get("targetId")
+        return None
+
+    async def _open_target(self, cdp, origin: str) -> str | None:
+        """Open a new page with the site."""
+        result = await cdp.send("Target.createTarget", {"url": origin})
+        target_id = result.get("targetId")
+        # Give the page a moment to load its scripts.
+        await asyncio.sleep(3)
+        return target_id

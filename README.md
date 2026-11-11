@@ -28,13 +28,15 @@ Telegram-менеджер аккаунтов Whitebird: балансы, выво
 | Octo Browser | `localhost:58888` | `POST /api/profiles/start` `{"uuid": ..., "debug_port": true}` |
 
 Локальные API слушают только `127.0.0.1` — backend должен быть на той же машине
-(или рядом с VPN/туннелем до неё).
+(или рядом с VPN/туннелем до неё). Сессия читается напрямую по CDP
+(WebSocket), без запуска полноценного браузера на сервере — Chromium не
+нужен, достаточно websocket-эндпоинта, который возвращает локальный API
+антидетект-браузера.
 
 ## Установка
 
 ```bash
 pip install -r requirements.txt
-playwright install chromium
 cp .env.example .env   # заполнить
 python -m app.main
 ```

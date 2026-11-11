@@ -6,7 +6,7 @@ services:
     region: frankfurt
     repo: https://github.com/spspsaaa/whitebird-manager
     branch: main
-    buildCommand: pip install -r requirements.txt && playwright install --with-deps chromium
+    buildCommand: pip install -r requirements.txt
     startCommand: python -m app.main
     healthCheckPath: /health
     disk:
