@@ -36,6 +36,8 @@ def bind_profile(account_id, browser, profile_id):
     if browser not in ("dolphin", "octo") or not 1 <= len(profile_id) <= 120:
         raise ValueError("Invalid profile")
     with db() as connection:
+        if connection.execute("SELECT 1 FROM accounts WHERE id=?", (account_id,)).fetchone() is None:
+            raise ValueError("Unknown account")
         if browser == "dolphin":
             count = connection.execute("SELECT COUNT(*) FROM browser_profiles WHERE browser='dolphin' AND account_id != ?", (account_id,)).fetchone()[0]
             if count >= 4:
@@ -58,6 +60,21 @@ def readiness_report(chat_id):
         lines += ["", "Не привязаны (первые 20):"]
         lines += [str(i) + ". " + name[:40] for i, name in missing[:20]]
     reply(chat_id, "\n".join(lines))
+
+def export_profiles(chat_id):
+    """Plain-text, non-secret inventory, split to fit Telegram message limits."""
+    rows = accounts()
+    with db() as connection:
+        links = dict((i, (b, p)) for i, b, p in connection.execute("SELECT account_id,browser,profile_id FROM browser_profiles"))
+    chunks = ["📄 ЭКСПОРТ ПРОФИЛЕЙ (без паролей и 2FA)\n\n"]
+    for i, name in rows:
+        browser, pid = links.get(i, ("не привязан", "—"))
+        line = str(i) + " | " + name.replace("\n", " ") + " | " + browser + " | " + pid + "\n"
+        if len(chunks[-1]) + len(line) > 3500:
+            chunks.append("📄 ЭКСПОРТ (продолжение)\n\n")
+        chunks[-1] += line
+    for chunk in chunks:
+        reply(chat_id, chunk)
 
 def audit_event(action, account_id=None):
     with db() as connection:
@@ -286,6 +303,7 @@ def sync_from_telegram(chat_id):
                 raise ValueError("Invalid backup entry")
             restored.append(entry)
         with db() as connection:
+            connection.execute("DELETE FROM browser_profiles")
             connection.execute("DELETE FROM accounts")
             connection.executemany("INSERT INTO accounts(id, name) VALUES (?, ?)", restored)
             if isinstance(profiles_snapshot, list) and len(profiles_snapshot) <= 100:
@@ -349,6 +367,9 @@ def handle_update(update):
         elif raw == "/diagnostics":
             STATES.pop(chat_id, None)
             readiness_report(chat_id)
+        elif raw == "/export":
+            STATES.pop(chat_id, None)
+            export_profiles(chat_id)
         elif raw == "/journal":
             STATES.pop(chat_id, None)
             audit_report(chat_id)
@@ -363,8 +384,9 @@ def handle_update(update):
             withdrawal_menu(chat_id)
         elif isinstance(STATES.get(chat_id), tuple):
             action, account_id = STATES[chat_id]
-            if not 1 <= len(raw) <= 60 or raw.startswith("/"):
-                reply(chat_id, "Напиши название длиной от 1 до 60 символов.")
+            limit = 120 if action.startswith("profile:") else 60
+            if not 1 <= len(raw) <= limit or raw.startswith("/"):
+                reply(chat_id, "Недопустимый ввод. Название — до 60 символов, ID профиля — до 120.")
             elif action == "add":
                 if len(accounts()) >= 100:
                     STATES.pop(chat_id, None)
