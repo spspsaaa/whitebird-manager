@@ -16,7 +16,7 @@ LOCK = threading.RLock()
 STATES = {}
 KEYBOARD = {"keyboard": [[{"text": "📊 Статус"}, {"text": "📋 Демо-аккаунты"}],
                          [{"text": "➕ Добавить демо"}, {"text": "➖ Удалить демо"}],
-                         [{"text": "❌ Отмена"}, {"text": "❓ Помощь"}]], "resize_keyboard": True}
+                         [{"text": "❓ Помощь"}]], "resize_keyboard": True}
 
 def db():
     connection = sqlite3.connect(DB_PATH, timeout=10)
