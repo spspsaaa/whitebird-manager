@@ -9,10 +9,15 @@ TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 OWNER = os.environ.get("TELEGRAM_OWNER_ID", "")
 WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
 
+DEMO_ACCOUNTS = []
+KEYBOARD = {"keyboard": [[{"text": "📊 Статус"}, {"text": "📋 Демо-аккаунты"}],
+                         [{"text": "➕ Добавить демо"}, {"text": "➖ Удалить демо"}],
+                         [{"text": "❓ Помощь"}]], "resize_keyboard": True}
+
 def reply(chat_id, text):
     if not TOKEN:
         return
-    payload = json.dumps({"chat_id": chat_id, "text": text}).encode()
+    payload = json.dumps({"chat_id": chat_id, "text": text, "reply_markup": KEYBOARD}).encode()
     req = Request("https://api.telegram.org/bot" + TOKEN + "/sendMessage", data=payload,
                   headers={"Content-Type": "application/json"}, method="POST")
     with urlopen(req, timeout=8) as response:
@@ -24,15 +29,43 @@ def handle_update(update):
     chat = message.get("chat") or {}
     if not OWNER or str(sender.get("id", "")) != OWNER or chat.get("id") is None:
         return
-    command = (message.get("text") or "").split(" ", 1)[0].split("@", 1)[0]
-    responses = {
-        "/start": "Тестовый бот запущен. Команды: /status, /accounts, /help",
-        "/help": "Демо без подключения к биржам, браузерам и платежам. /status /accounts",
-        "/status": "Сервис работает. Режим: безопасная демонстрация.",
-        "/accounts": "Демо-аккаунты: 0. Реальные аккаунты не подключены.",
-    }
-    if command in responses:
-        reply(chat["id"], responses[command])
+    raw = (message.get("text") or "").strip()
+    command = raw.split(" ", 1)[0].split("@", 1)[0]
+    if command == "/start":
+        answer = "Тестовый бот запущен. Выбирай действие кнопками ниже."
+    elif command == "/status" or raw == "📊 Статус":
+        answer = "🟢 Сервер работает. Режим: демонстрация. Демо-аккаунтов: " + str(len(DEMO_ACCOUNTS))
+    elif command == "/accounts" or raw == "📋 Демо-аккаунты":
+        answer = ("Демо-аккаунтов пока нет." if not DEMO_ACCOUNTS else
+                  "Тестовые записи:\\n" + "\\n".join(str(i + 1) + ". " + name for i, name in enumerate(DEMO_ACCOUNTS)))
+    elif command == "/help" or raw == "❓ Помощь":
+        answer = ("Это локальное демо без реальных аккаунтов и платежей.\\n"
+                  "/adddemo Название — создать запись\\n"
+                  "/removedemo Номер — удалить запись\\n"
+                  "/accounts — показать записи")
+    elif raw == "➕ Добавить демо":
+        answer = "Отправь: /adddemo Название (например, /adddemo Тест 1)"
+    elif raw == "➖ Удалить демо":
+        answer = "Отправь: /removedemo Номер (например, /removedemo 1)"
+    elif command == "/adddemo":
+        name = raw.partition(" ")[2].strip()
+        if not name or len(name) > 60:
+            answer = "Укажи название до 60 символов: /adddemo Название"
+        elif len(DEMO_ACCOUNTS) >= 20:
+            answer = "Достигнут лимит 20 тестовых записей."
+        else:
+            DEMO_ACCOUNTS.append(name)
+            answer = "Добавлена тестовая запись №" + str(len(DEMO_ACCOUNTS)) + ": " + name
+    elif command == "/removedemo":
+        arg = raw.partition(" ")[2].strip()
+        if not arg.isdigit() or not (1 <= int(arg) <= len(DEMO_ACCOUNTS)):
+            answer = "Укажи номер существующей записи: /removedemo 1"
+        else:
+            name = DEMO_ACCOUNTS.pop(int(arg) - 1)
+            answer = "Удалена тестовая запись: " + name
+    else:
+        answer = "Выбери действие в меню или отправь /help."
+    reply(chat["id"], answer)
 
 class Handler(BaseHTTPRequestHandler):
     def send_json(self, status, obj):
