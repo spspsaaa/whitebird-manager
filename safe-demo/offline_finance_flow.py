@@ -102,7 +102,7 @@ class OfflineFinanceAgent:
         self._auth(actor_id)
         with self._lock:
             if request_id in self._completed:
-                return {"status": "already_completed", **self._completed[request_id]}
+                return {**self._completed[request_id], "status": "already_completed"}
             draft = self._drafts.pop(request_id, None)
             if draft is None:
                 raise ValueError("Unknown or expired request")
