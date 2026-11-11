@@ -18,7 +18,7 @@ KEYBOARD = {"keyboard": [[{"text": "Вывод средств 💳"}, {"text": "
 
 def db():
     connection = sqlite3.connect(DB_PATH, timeout=10)
-    connection.execute("CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL")
+    connection.execute("CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)")
     connection.execute("CREATE TABLE IF NOT EXISTS processed_updates (update_id INTEGER PRIMARY KEY, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
     connection.execute("CREATE TABLE IF NOT EXISTS browser_profiles (account_id INTEGER PRIMARY KEY, browser TEXT NOT NULL, profile_id TEXT NOT NULL, UNIQUE(browser,profile_id))")
     return connection
