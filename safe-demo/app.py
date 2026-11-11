@@ -3,6 +3,8 @@ import json
 import hmac
 import sqlite3
 import threading
+import time
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlparse
@@ -13,13 +15,21 @@ WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
 
 DB_PATH = os.environ.get("DEMO_DB_PATH", "/tmp/telegram_demo.sqlite3")
 LOCK = threading.RLock()
+DEMO_SEED_ENABLED = os.environ.get("DEMO_SEED_ENABLED", "false").lower() == "true"
+DOLPHIN_ACCOUNT_IDS = frozenset(int(x.strip()) for x in os.environ.get("DOLPHIN_ACCOUNT_IDS", "").split(",") if x.strip().isdigit())
+
 STATES = {}
 KEYBOARD = {"keyboard": [[{"text": "Вывод средств 💳"}, {"text": "Аккаунты 👥"}], [{"text": "Запросить балансы 💰"}]], "resize_keyboard": True}
 
 def db():
     connection = sqlite3.connect(DB_PATH, timeout=10)
     connection.execute("CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)")
-    connection.execute("CREATE TABLE IF NOT EXISTS processed_updates (update_id INTEGER PRIMARY KEY, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+    connection.execute("CREATE TABLE IF NOT EXISTS processed_updates (update_id INTEGER PRIMARY KEY, created_at TEXT DEFAULT CURRENT_TIMESTAMP, status TEXT NOT NULL DEFAULT 'done', claimed_at INTEGER NOT NULL DEFAULT 0)")
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(processed_updates)")}
+    if "status" not in columns:
+        connection.execute("ALTER TABLE processed_updates ADD COLUMN status TEXT NOT NULL DEFAULT 'done'")
+    if "claimed_at" not in columns:
+        connection.execute("ALTER TABLE processed_updates ADD COLUMN claimed_at INTEGER NOT NULL DEFAULT 0")
     connection.execute("CREATE TABLE IF NOT EXISTS browser_profiles (account_id INTEGER PRIMARY KEY, browser TEXT NOT NULL, profile_id TEXT NOT NULL, UNIQUE(browser,profile_id))")
     connection.execute("CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, action TEXT NOT NULL, account_id INTEGER)")
     return connection
@@ -33,11 +43,17 @@ def profile(account_id):
         return connection.execute("SELECT browser, profile_id FROM browser_profiles WHERE account_id=?", (account_id,)).fetchone()
 
 def bind_profile(account_id, browser, profile_id):
-    if browser not in ("dolphin", "octo") or not 1 <= len(profile_id) <= 120:
+    if browser not in ("dolphin", "octo") or not isinstance(profile_id, str) or not 1 <= len(profile_id.strip()) <= 120:
         raise ValueError("Invalid profile")
-    with db() as connection:
+    profile_id = profile_id.strip()
+    if DOLPHIN_ACCOUNT_IDS and ((account_id in DOLPHIN_ACCOUNT_IDS) != (browser == "dolphin")):
+        raise ValueError("Browser assignment is locked")
+    with LOCK, db() as connection:
         if connection.execute("SELECT 1 FROM accounts WHERE id=?", (account_id,)).fetchone() is None:
             raise ValueError("Unknown account")
+        existing = connection.execute("SELECT browser,profile_id FROM browser_profiles WHERE account_id=?", (account_id,)).fetchone()
+        if existing and existing[0] != browser:
+            raise ValueError("Browser change requires migration")
         if browser == "dolphin":
             count = connection.execute("SELECT COUNT(*) FROM browser_profiles WHERE browser='dolphin' AND account_id != ?", (account_id,)).fetchone()[0]
             if count >= 4:
@@ -313,7 +329,7 @@ def sync_from_telegram(chat_id):
                         and 1 <= len(entry[2]) <= 120):
                         connection.execute("INSERT OR IGNORE INTO browser_profiles(account_id,browser,profile_id) VALUES(?,?,?)", tuple(entry))
     SYNCED_CHATS.add(chat_id)
-    if chat_id not in SEED_DONE:
+    if DEMO_SEED_ENABLED and chat_id not in SEED_DONE:
         existing = accounts()
         missing = max(0, 40 - len(existing))
         if missing:
@@ -342,15 +358,28 @@ def save_to_telegram(chat_id):
 
 def handle_update(update):
     update_id = update.get("update_id")
-    if isinstance(update_id, int) and update_id >= 0:
-        with LOCK:
+    with LOCK:
+        if isinstance(update_id, int) and update_id >= 0:
+            now = int(time.time())
             with db() as connection:
-                seen = connection.execute("SELECT 1 FROM processed_updates WHERE update_id=?", (update_id,)).fetchone()
-                if seen:
+                seen = connection.execute("SELECT status,claimed_at FROM processed_updates WHERE update_id=?", (update_id,)).fetchone()
+                if seen and (seen[0] == "done" or (seen[0] == "processing" and now - seen[1] < 120)):
                     return
-                # Claim before processing: prevents duplicate financial-demo commands or UI edits.
-                connection.execute("INSERT INTO processed_updates(update_id) VALUES (?)", (update_id,))
-                connection.execute("DELETE FROM processed_updates WHERE update_id NOT IN (SELECT update_id FROM processed_updates ORDER BY update_id DESC LIMIT 1000)")
+                connection.execute("INSERT INTO processed_updates(update_id,status,claimed_at) VALUES (?,'processing',?) ON CONFLICT(update_id) DO UPDATE SET status='processing',claimed_at=excluded.claimed_at", (update_id, now))
+        try:
+            _dispatch_update(update)
+        except Exception:
+            if isinstance(update_id, int) and update_id >= 0:
+                with db() as connection:
+                    connection.execute("DELETE FROM processed_updates WHERE update_id=? AND status='processing'", (update_id,))
+            raise
+        else:
+            if isinstance(update_id, int) and update_id >= 0:
+                with db() as connection:
+                    connection.execute("UPDATE processed_updates SET status='done' WHERE update_id=?", (update_id,))
+                    connection.execute("DELETE FROM processed_updates WHERE status='done' AND update_id NOT IN (SELECT update_id FROM processed_updates WHERE status='done' ORDER BY update_id DESC LIMIT 1000)")
+
+def _dispatch_update(update):
     if update.get("callback_query"):
         return handle_callback(update["callback_query"])
     message = update.get("message") or {}
@@ -462,6 +491,18 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return self.send_json(503, {"error": "temporary failure"})
 
+def validate_config():
+    if not TOKEN or not re.fullmatch(r"[0-9]{6,15}:[A-Za-z0-9_-]{20,}", TOKEN):
+        raise RuntimeError("Invalid TELEGRAM_BOT_TOKEN")
+    if not OWNER.isdigit() or int(OWNER) <= 0:
+        raise RuntimeError("Invalid TELEGRAM_OWNER_ID")
+    if not WEBHOOK_SECRET or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", WEBHOOK_SECRET):
+        raise RuntimeError("Invalid TELEGRAM_WEBHOOK_SECRET")
+    if len(DOLPHIN_ACCOUNT_IDS) not in (0, 4):
+        raise RuntimeError("DOLPHIN_ACCOUNT_IDS must contain exactly four IDs when configured")
+    if DEMO_SEED_ENABLED and os.environ.get("ALLOW_DEMO_SEED_IN_PRODUCTION") != "true":
+        raise RuntimeError("Demo seeding requires explicit authorization")
+
 def register_webhook():
     if not TOKEN or not WEBHOOK_SECRET:
         return
@@ -480,6 +521,7 @@ def register_webhook():
         print("Webhook registration failed:", type(exc).__name__, flush=True)
 
 if __name__ == "__main__":
+    validate_config()
     register_webhook()
     port = int(os.environ.get("PORT", "10000"))
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
