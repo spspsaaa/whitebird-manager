@@ -69,6 +69,24 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return self.send_json(503, {"error": "temporary failure"})
 
+def register_webhook():
+    if not TOKEN or not WEBHOOK_SECRET:
+        return
+    payload = json.dumps({
+        "url": "https://telegram-safe-demo.onrender.com/telegram",
+        "secret_token": WEBHOOK_SECRET,
+        "allowed_updates": ["message"]
+    }).encode()
+    req = Request("https://api.telegram.org/bot" + TOKEN + "/setWebhook",
+                  data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urlopen(req, timeout=12) as response:
+            result = json.load(response)
+        print("Webhook registration:", "success" if result.get("ok") else "failed", flush=True)
+    except Exception as exc:
+        print("Webhook registration failed:", type(exc).__name__, flush=True)
+
 if __name__ == "__main__":
+    register_webhook()
     port = int(os.environ.get("PORT", "10000"))
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
