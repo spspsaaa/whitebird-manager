@@ -18,7 +18,7 @@ KEYBOARD = {"keyboard": [[{"text": "Вывод средств 💳"}, {"text": "
 
 def db():
     connection = sqlite3.connect(DB_PATH, timeout=10)
-    connection.execute("CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)")
+    connection.execute("CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)")\n    connection.execute("CREATE TABLE IF NOT EXISTS processed_updates (update_id INTEGER PRIMARY KEY, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
     return connection
 
 def accounts():
@@ -59,7 +59,7 @@ def account_menu(chat_id, message_id=None, page=0):
             nav.append({"text": "▶️", "callback_data": "page:" + str(page + 1)})
         buttons.append(nav)
     buttons.append([{"text": "➕ Добавить аккаунт", "callback_data": "add"}])
-    text = "👥 АККАУНТЫ\\n\\n" + (str(len(rows)) + " тестовых записей · страница " + str(page + 1) + "/" + str(pages) if rows else "Пока нет аккаунтов.")
+    text = "👥 АККАУНТЫ\n\n" + (str(len(rows)) + " тестовых записей · страница " + str(page + 1) + "/" + str(pages) if rows else "Пока нет аккаунтов.")
     show(chat_id, text, buttons, message_id)
 
 def demo_balances(account_id):
@@ -71,20 +71,20 @@ def demo_balances(account_id):
 def balances_report(chat_id):
     rows = accounts()
     if not rows:
-        return reply(chat_id, "💰 ДЕМО-БАЛАНСЫ\\n\\nАккаунтов пока нет.")
+        return reply(chat_id, "💰 ДЕМО-БАЛАНСЫ\n\nАккаунтов пока нет.")
     total_rub = sum(demo_balances(i)[0] for i, _ in rows)
     total_usdt = sum(demo_balances(i)[1] for i, _ in rows)
-    header = "💰 ДЕМО-БАЛАНСЫ — НЕ РЕАЛЬНЫЕ СРЕДСТВА\\n\\n"
-    footer = ("\\nАккаунтов: " + str(len(rows)) + "\\nИтого RUB: " +
-              f"{total_rub:,.2f}" + " ₽\\nИтого USDT: " + f"{total_usdt:,.2f}" + " USDT")
-    lines = [f"{index:02d}. {name[:24]}\\n   {demo_balances(i)[0]:,.2f} ₽ | {demo_balances(i)[1]:,.2f} USDT"
+    header = "💰 ДЕМО-БАЛАНСЫ — НЕ РЕАЛЬНЫЕ СРЕДСТВА\n\n"
+    footer = ("\nАккаунтов: " + str(len(rows)) + "\nИтого RUB: " +
+              f"{total_rub:,.2f}" + " ₽\nИтого USDT: " + f"{total_usdt:,.2f}" + " USDT")
+    lines = [f"{index:02d}. {name[:24]}\n   {demo_balances(i)[0]:,.2f} ₽ | {demo_balances(i)[1]:,.2f} USDT"
              for index, (i, name) in enumerate(rows, 1)]
     chunk = header
     for line in lines:
         if len(chunk) + len(line) + len(footer) + 2 > 3500:
             reply(chat_id, chunk.rstrip())
-            chunk = "💰 ДЕМО-БАЛАНСЫ (продолжение)\\n\\n"
-        chunk += line + "\\n"
+            chunk = "💰 ДЕМО-БАЛАНСЫ (продолжение)\n\n"
+        chunk += line + "\n"
     reply(chat_id, chunk + footer)
 
 def withdrawal_account_menu(chat_id, message_id=None, page=0):
@@ -107,29 +107,29 @@ def withdrawal_account_menu(chat_id, message_id=None, page=0):
             nav.append({"text": "▶️", "callback_data": "wpage:" + str(page + 1)})
         buttons.append(nav)
     buttons.append([{"text": "⬅️ Назад", "callback_data": "withdraw"}])
-    show(chat_id, "💳 ДЕМО-ВЫВОД\\n\\nВыбери тестовый аккаунт:", buttons, message_id)
+    show(chat_id, "💳 ДЕМО-ВЫВОД\n\nВыбери тестовый аккаунт:", buttons, message_id)
 
 def withdrawal_preview(chat_id, account_id, message_id=None):
     row = next(((i, name) for i, name in accounts() if i == account_id), None)
     if row is None:
         return withdrawal_account_menu(chat_id, message_id)
     rub, usdt = demo_balances(account_id)
-    show(chat_id, "💳 ДЕМО-ВЫВОД — ПРЕДПРОСМОТР\\n\\nАккаунт: " + row[1] +
-         f"\\nТестовый RUB: {rub:,.2f} ₽\\nТестовый USDT: {usdt:,.2f} USDT" +
-         "\\n\\nРеальные переводы недоступны. Эта функция не может отправлять средства.",
+    show(chat_id, "💳 ДЕМО-ВЫВОД — ПРЕДПРОСМОТР\n\nАккаунт: " + row[1] +
+         f"\nТестовый RUB: {rub:,.2f} ₽\nТестовый USDT: {usdt:,.2f} USDT" +
+         "\n\nРеальные переводы недоступны. Эта функция не может отправлять средства.",
          [[{"text": "⬅️ Выбор аккаунта", "callback_data": "withdraw:single"}]], message_id)
 
 def account_detail(chat_id, account_id, message_id=None):
     row = next(((i, n) for i, n in accounts() if i == account_id), None)
     if row is None:
         return account_menu(chat_id, message_id)
-    show(chat_id, "👤 АККАУНТ №" + str(row[0]) + "\\nНазвание: " + row[1] + "\\nРежим: демонстрация",
+    show(chat_id, "👤 АККАУНТ №" + str(row[0]) + "\nНазвание: " + row[1] + "\nРежим: демонстрация",
          [[{"text": "✏️ Редактировать", "callback_data": "edit:" + str(account_id)},
            {"text": "🗑 Удалить", "callback_data": "delete:" + str(account_id)}],
           [{"text": "⬅️ К аккаунтам", "callback_data": "accounts"}]], message_id)
 
 def withdrawal_menu(chat_id, message_id=None):
-    show(chat_id, "💳 ВЫВОД СРЕДСТВ\\n\\nВыбери режим. Это только демонстрация, переводы не выполняются.",
+    show(chat_id, "💳 ВЫВОД СРЕДСТВ\n\nВыбери режим. Это только демонстрация, переводы не выполняются.",
          [[{"text": "👤 Одиночный", "callback_data": "withdraw:single"}],
           [{"text": "👥 Массовый", "callback_data": "withdraw:bulk"}]], message_id)
 
@@ -162,11 +162,11 @@ def handle_callback(callback):
         elif data.startswith("wacc:") and data[5:].isdigit():
             withdrawal_preview(chat_id, int(data[5:]), message_id)
         elif data == "withdraw:bulk":
-            show(chat_id, "💳 МАССОВЫЙ ДЕМО-ВЫВОД\\n\\nТестовый сценарий. Реальные переводы отключены.",
+            show(chat_id, "💳 МАССОВЫЙ ДЕМО-ВЫВОД\n\nТестовый сценарий. Реальные переводы отключены.",
                  [[{"text": "⬅️ Назад", "callback_data": "withdraw"}]], message_id)
         elif data == "add":
             STATES[chat_id] = ("add", None)
-            show(chat_id, "➕ НОВЫЙ АККАУНТ\\n\\nОтправь название обычным сообщением (до 60 символов).",
+            show(chat_id, "➕ НОВЫЙ АККАУНТ\n\nОтправь название обычным сообщением (до 60 символов).",
                  [[{"text": "⬅️ К аккаунтам", "callback_data": "accounts"}]], message_id)
         elif data.startswith("acc:") and data[4:].isdigit():
             STATES.pop(chat_id, None)
@@ -177,7 +177,7 @@ def handle_callback(callback):
                 account_menu(chat_id, message_id)
             else:
                 STATES[chat_id] = ("edit", account_id)
-                show(chat_id, "✏️ РЕДАКТИРОВАНИЕ\\n\\nОтправь новое название аккаунта.",
+                show(chat_id, "✏️ РЕДАКТИРОВАНИЕ\n\nОтправь новое название аккаунта.",
                      [[{"text": "⬅️ Назад", "callback_data": "acc:" + str(account_id)}]], message_id)
         elif data.startswith("delete:") and data[7:].isdigit():
             account_id = int(data.split(":")[1])
@@ -266,9 +266,9 @@ def handle_update(update):
     raw = (message.get("text") or "").strip()
     with LOCK:
         sync_from_telegram(chat_id)
-        if raw == "/start":
+        if raw in ("/status", "/help"):\n            STATES.pop(chat_id, None)\n            reply(chat_id, "🟢 БОТ РАБОТАЕТ\\n\\nАккаунтов: " + str(len(accounts())) + "\\nРежим: демонстрация\\nRUB/USDT: тестовые значения\\nРеальный вход и переводы: отключены")\n        elif raw == "/start":
             STATES.pop(chat_id, None)
-            reply(chat_id, "Добро пожаловать! Выбери один из двух разделов ниже.")
+            reply(chat_id, "Добро пожаловать! Выбери раздел ниже: аккаунты, балансы или демонстрационный вывод.")
         elif raw in ("Аккаунты 👥", "/accounts"):
             STATES.pop(chat_id, None)
             account_menu(chat_id)
