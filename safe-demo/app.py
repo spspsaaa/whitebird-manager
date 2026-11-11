@@ -62,19 +62,23 @@ def account_menu(chat_id, message_id=None, page=0):
     text = "👥 АККАУНТЫ\\n\\n" + (str(len(rows)) + " тестовых записей · страница " + str(page + 1) + "/" + str(pages) if rows else "Пока нет аккаунтов.")
     show(chat_id, text, buttons, message_id)
 
-def demo_balance(account_id):
-    # Deterministic fictional USDT amount, never fetched from an external account.
-    return ((account_id * 7919 + 137) % 125000) / 100
+def demo_balances(account_id):
+    """Read-only, deterministic fictional amounts. No external financial access."""
+    rub = ((account_id * 13679 + 401) % 900000) / 100
+    usdt = ((account_id * 7919 + 137) % 125000) / 100
+    return rub, usdt
 
 def balances_report(chat_id):
     rows = accounts()
     if not rows:
         return reply(chat_id, "💰 ДЕМО-БАЛАНСЫ\\n\\nАккаунтов пока нет.")
-    total = sum(demo_balance(i) for i, _ in rows)
-    header = "💰 ДЕМО-БАЛАНСЫ (не реальные средства)\\n\\n"
-    footer = "\\nВсего аккаунтов: " + str(len(rows)) + "\\nИтого: " + f"{total:,.2f}" + " тестовых USDT"
-    lines = [f"{index:02d}. {name[:35]} — {demo_balance(i):,.2f} USDT" for index, (i, name) in enumerate(rows, 1)]
-    # Telegram messages have a length limit; split large reports safely.
+    total_rub = sum(demo_balances(i)[0] for i, _ in rows)
+    total_usdt = sum(demo_balances(i)[1] for i, _ in rows)
+    header = "💰 ДЕМО-БАЛАНСЫ — НЕ РЕАЛЬНЫЕ СРЕДСТВА\\n\\n"
+    footer = ("\\nАккаунтов: " + str(len(rows)) + "\\nИтого RUB: " +
+              f"{total_rub:,.2f}" + " ₽\\nИтого USDT: " + f"{total_usdt:,.2f}" + " USDT")
+    lines = [f"{index:02d}. {name[:24]}\\n   {demo_balances(i)[0]:,.2f} ₽ | {demo_balances(i)[1]:,.2f} USDT"
+             for index, (i, name) in enumerate(rows, 1)]
     chunk = header
     for line in lines:
         if len(chunk) + len(line) + len(footer) + 2 > 3500:
@@ -82,6 +86,38 @@ def balances_report(chat_id):
             chunk = "💰 ДЕМО-БАЛАНСЫ (продолжение)\\n\\n"
         chunk += line + "\\n"
     reply(chat_id, chunk + footer)
+
+def withdrawal_account_menu(chat_id, message_id=None, page=0):
+    rows = accounts()
+    if not rows:
+        return show(chat_id, "Нет тестовых аккаунтов.", [[{"text": "⬅️ Назад", "callback_data": "withdraw"}]], message_id)
+    pages = max(1, (len(rows) + 9) // 10)
+    page = max(0, min(page, pages - 1))
+    visible = rows[page * 10:(page + 1) * 10]
+    buttons = []
+    for offset in range(0, len(visible), 2):
+        buttons.append([{"text": "👤 " + name[:18], "callback_data": "wacc:" + str(i)}
+                        for i, name in visible[offset:offset + 2]])
+    if pages > 1:
+        nav = []
+        if page > 0:
+            nav.append({"text": "◀️", "callback_data": "wpage:" + str(page - 1)})
+        nav.append({"text": str(page + 1) + "/" + str(pages), "callback_data": "wpage:" + str(page)})
+        if page + 1 < pages:
+            nav.append({"text": "▶️", "callback_data": "wpage:" + str(page + 1)})
+        buttons.append(nav)
+    buttons.append([{"text": "⬅️ Назад", "callback_data": "withdraw"}])
+    show(chat_id, "💳 ДЕМО-ВЫВОД\\n\\nВыбери тестовый аккаунт:", buttons, message_id)
+
+def withdrawal_preview(chat_id, account_id, message_id=None):
+    row = next(((i, name) for i, name in accounts() if i == account_id), None)
+    if row is None:
+        return withdrawal_account_menu(chat_id, message_id)
+    rub, usdt = demo_balances(account_id)
+    show(chat_id, "💳 ДЕМО-ВЫВОД — ПРЕДПРОСМОТР\\n\\nАккаунт: " + row[1] +
+         f"\\nТестовый RUB: {rub:,.2f} ₽\\nТестовый USDT: {usdt:,.2f} USDT" +
+         "\\n\\nРеальные переводы недоступны. Эта функция не может отправлять средства.",
+         [[{"text": "⬅️ Выбор аккаунта", "callback_data": "withdraw:single"}]], message_id)
 
 def account_detail(chat_id, account_id, message_id=None):
     row = next(((i, n) for i, n in accounts() if i == account_id), None)
@@ -118,9 +154,15 @@ def handle_callback(callback):
         elif data == "withdraw":
             STATES.pop(chat_id, None)
             withdrawal_menu(chat_id, message_id)
-        elif data in ("withdraw:single", "withdraw:bulk"):
-            mode = "Одиночный" if data == "withdraw:single" else "Массовый"
-            show(chat_id, "💳 " + mode + " вывод\\n\\nДемонстрационный экран. Реальные операции отключены.",
+        elif data == "withdraw:single":
+            STATES.pop(chat_id, None)
+            withdrawal_account_menu(chat_id, message_id)
+        elif data.startswith("wpage:") and data[6:].isdigit():
+            withdrawal_account_menu(chat_id, message_id, int(data[6:]))
+        elif data.startswith("wacc:") and data[5:].isdigit():
+            withdrawal_preview(chat_id, int(data[5:]), message_id)
+        elif data == "withdraw:bulk":
+            show(chat_id, "💳 МАССОВЫЙ ДЕМО-ВЫВОД\\n\\nТестовый сценарий. Реальные переводы отключены.",
                  [[{"text": "⬅️ Назад", "callback_data": "withdraw"}]], message_id)
         elif data == "add":
             STATES[chat_id] = ("add", None)
