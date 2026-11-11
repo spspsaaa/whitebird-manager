@@ -42,11 +42,14 @@ def show(chat_id, text, buttons, message_id=None):
 
 def account_menu(chat_id, message_id=None, page=0):
     rows = accounts()
-    per_page = 8
+    per_page = 10
     pages = max(1, (len(rows) + per_page - 1) // per_page)
     page = max(0, min(page, pages - 1))
     start = page * per_page
-    buttons = [[{"text": "👤 " + name[:45], "callback_data": "acc:" + str(i)}] for i, name in rows[start:start + per_page]]
+    visible = rows[start:start + per_page]
+    buttons = []
+    for offset in range(0, len(visible), 2):
+        buttons.append([{"text": "👤 " + name[:19], "callback_data": "acc:" + str(i)} for i, name in visible[offset:offset + 2]])
     if pages > 1:
         nav = []
         if page > 0:
