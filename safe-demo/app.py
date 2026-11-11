@@ -72,6 +72,8 @@ def sync_from_telegram(chat_id):
             connection.execute("DELETE FROM accounts")
             connection.executemany("INSERT INTO accounts(id, name) VALUES (?, ?)", restored)
     SYNCED_CHATS.add(chat_id)
+    if not text.startswith(BACKUP_PREFIX) and accounts():
+        save_to_telegram(chat_id)
 
 def save_to_telegram(chat_id):
     content = BACKUP_PREFIX + json.dumps([[i, n] for i, n in accounts()], ensure_ascii=False, separators=(",", ":"))
