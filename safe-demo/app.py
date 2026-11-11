@@ -66,7 +66,7 @@ def handle_callback(callback):
     message = callback.get("message") or {}
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
-    if str(sender.get("id", "")) != OWNER or chat_id is None:
+    if not OWNER or str(sender.get("id", "")) != OWNER or chat_id is None:
         return
     telegram_api("answerCallbackQuery", {"callback_query_id": callback["id"]})
     data = callback.get("data", "")
@@ -79,7 +79,7 @@ def handle_callback(callback):
         elif data == "withdraw":
             STATES.pop(chat_id, None)
             withdrawal_menu(chat_id, message_id)
-        elif data.startswith("withdraw:"):
+        elif data in ("withdraw:single", "withdraw:bulk"):
             mode = "Одиночный" if data == "withdraw:single" else "Массовый"
             show(chat_id, "💳 " + mode + " вывод\\n\\nДемонстрационный экран. Реальные операции отключены.",
                  [[{"text": "⬅️ Назад", "callback_data": "withdraw"}]], message_id)
@@ -87,10 +87,10 @@ def handle_callback(callback):
             STATES[chat_id] = ("add", None)
             show(chat_id, "➕ НОВЫЙ АККАУНТ\\n\\nОтправь название обычным сообщением (до 60 символов).",
                  [[{"text": "⬅️ К аккаунтам", "callback_data": "accounts"}]], message_id)
-        elif data.startswith("acc:"):
+        elif data.startswith("acc:") and data[4:].isdigit():
             STATES.pop(chat_id, None)
             account_detail(chat_id, int(data.split(":")[1]), message_id)
-        elif data.startswith("edit:"):
+        elif data.startswith("edit:") and data[5:].isdigit():
             account_id = int(data.split(":")[1])
             if account_id not in {i for i, _ in accounts()}:
                 account_menu(chat_id, message_id)
@@ -98,12 +98,12 @@ def handle_callback(callback):
                 STATES[chat_id] = ("edit", account_id)
                 show(chat_id, "✏️ РЕДАКТИРОВАНИЕ\\n\\nОтправь новое название аккаунта.",
                      [[{"text": "⬅️ Назад", "callback_data": "acc:" + str(account_id)}]], message_id)
-        elif data.startswith("delete:"):
+        elif data.startswith("delete:") and data[7:].isdigit():
             account_id = int(data.split(":")[1])
             show(chat_id, "Удалить тестовый аккаунт №" + str(account_id) + "?",
                  [[{"text": "🗑 Да, удалить", "callback_data": "confirm:" + str(account_id)}],
                   [{"text": "⬅️ Назад", "callback_data": "acc:" + str(account_id)}]], message_id)
-        elif data.startswith("confirm:"):
+        elif data.startswith("confirm:") and data[8:].isdigit():
             account_id = int(data.split(":")[1])
             with db() as connection:
                 connection.execute("DELETE FROM accounts WHERE id=?", (account_id,))
@@ -142,9 +142,9 @@ def sync_from_telegram(chat_id):
         with db() as connection:
             connection.execute("DELETE FROM accounts")
             connection.executemany("INSERT INTO accounts(id, name) VALUES (?, ?)", restored)
-    SYNCED_CHATS.add(chat_id)
     if not text.startswith(BACKUP_PREFIX) and accounts():
         save_to_telegram(chat_id)
+    SYNCED_CHATS.add(chat_id)
 
 def save_to_telegram(chat_id):
     content = BACKUP_PREFIX + json.dumps([[i, n] for i, n in accounts()], ensure_ascii=False, separators=(",", ":"))
