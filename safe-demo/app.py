@@ -294,9 +294,18 @@ def handle_update(update):
     raw = (message.get("text") or "").strip()
     with LOCK:
         sync_from_telegram(chat_id)
-        if raw in ("/status", "/help"):\n            STATES.pop(chat_id, None)\n            reply(chat_id, "🟢 БОТ РАБОТАЕТ\\n\\nАккаунтов: " + str(len(accounts())) + "\\nРежим: демонстрация\\nRUB/USDT: тестовые значения\\nРеальный вход и переводы: отключены")\n        elif raw == "/start":
+        if raw in ("/status", "/help"):
             STATES.pop(chat_id, None)
-            reply(chat_id, "Добро пожаловать! Выбери раздел ниже: аккаунты, балансы или демонстрационный вывод.")
+            count = len(accounts())
+            with db() as connection:
+                linked = dict(connection.execute("SELECT browser, COUNT(*) FROM browser_profiles GROUP BY browser").fetchall())
+            reply(chat_id, "🟢 БОТ РАБОТАЕТ\n\nАккаунтов: " + str(count) +
+                  "\nDolphin: " + str(linked.get("dolphin", 0)) + "/4" +
+                  "\nOcto: " + str(linked.get("octo", 0)) +
+                  "\nРежим: демонстрация\nRUB/USDT: тестовые данные\nРеальные переводы отключены")
+        elif raw == "/start":
+            STATES.pop(chat_id, None)
+            reply(chat_id, "Добро пожаловать! Выбери раздел ниже.")
         elif raw in ("Аккаунты 👥", "/accounts"):
             STATES.pop(chat_id, None)
             account_menu(chat_id)
