@@ -1,5 +1,14 @@
 "use strict";
 const output = document.getElementById("output");
+const copyButton = document.getElementById("copy");
+let lastReading = null;
+copyButton.addEventListener("click", async () => {
+  if (!lastReading) return;
+  try {
+    await navigator.clipboard.writeText(lastReading);
+    output.textContent += "\n\nСкопировано. Вставь сообщение в Telegram и отправь вручную.";
+  } catch { output.textContent += "\n\nКопирование недоступно."; }
+});
 async function activeWhitebirdTab() {
   const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
   if (!tab || !tab.id || !tab.url) throw Error("Открой страницу кошельков WhiteBird.");
@@ -15,6 +24,8 @@ async function readFromTab(func) {
   return results?.[0]?.result;
 }
 document.getElementById("wallets").addEventListener("click", async () => {
+  lastReading = null;
+  copyButton.disabled = true;
   output.textContent = "Чтение таблицы…";
   try {
     const result = await readFromTab(() => {
@@ -58,6 +69,10 @@ document.getElementById("wallets").addEventListener("click", async () => {
                    "USDT: " + (found.USDT || "не найдено")];
     if (!found["RUB.wb"] || !found.USDT) lines.push("Структура таблицы может отличаться. Не считай «не найдено» нулём.");
     output.textContent = lines.join("\n");
+    if (found["RUB.wb"] && found.USDT) {
+      lastReading = "WhiteBird — баланс (локальное чтение)\nRUB.wb: " + found["RUB.wb"] + "\nUSDT: " + found.USDT;
+      copyButton.disabled = false;
+    }
   } catch (error) { output.textContent = error.message || "Не удалось прочитать страницу."; }
 });
 document.getElementById("read").addEventListener("click", async () => {
