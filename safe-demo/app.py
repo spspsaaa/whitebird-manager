@@ -57,7 +57,7 @@ def handle_update(update):
             answer = "🟢 Сервер работает. Тестовых записей: " + str(len(rows))
         elif command == "/accounts" or raw == "📋 Демо-аккаунты":
             answer = ("Демо-аккаунтов пока нет." if not rows else
-                      "Тестовые записи:\n" + "\n".join(str(id) + ". " + name for id, name in rows))
+                      "Тестовые записи:\n" + "\\n".join(str(id) + ". " + name for id, name in rows))
         elif command == "/help" or raw == "❓ Помощь":
             answer = ("Используй кнопки для создания и удаления тестовых записей.\n"
                       "Данные сохраняются в локальную SQLite-базу, но могут пропасть после перезапуска Render Free.\n"
@@ -69,7 +69,7 @@ def handle_update(update):
             STATES[chat_id] = "delete"
             answer = ("Удалять пока нечего." if not rows else
                       "Отправь номер записи для удаления:\n" +
-                      "\n".join(str(id) + ". " + name for id, name in rows))
+                      "\\n".join(str(id) + ". " + name for id, name in rows))
             if not rows:
                 STATES.pop(chat_id, None)
         elif STATES.get(chat_id) == "add" or command == "/adddemo":
