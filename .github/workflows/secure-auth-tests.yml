@@ -22,4 +22,4 @@ jobs:
         run: python -m compileall -q safe-demo
       - name: Run offline approval tests
         working-directory: safe-demo
-        run: python -m unittest -v test_secure_auth
+        run: python -m unittest -v test_secure_auth test_session_manager
