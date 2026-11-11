@@ -341,6 +341,16 @@ def save_to_telegram(chat_id):
     telegram_api("pinChatMessage", {"chat_id": chat_id, "message_id": sent["message_id"], "disable_notification": True})
 
 def handle_update(update):
+    update_id = update.get("update_id")
+    if isinstance(update_id, int) and update_id >= 0:
+        with LOCK:
+            with db() as connection:
+                seen = connection.execute("SELECT 1 FROM processed_updates WHERE update_id=?", (update_id,)).fetchone()
+                if seen:
+                    return
+                # Claim before processing: prevents duplicate financial-demo commands or UI edits.
+                connection.execute("INSERT INTO processed_updates(update_id) VALUES (?)", (update_id,))
+                connection.execute("DELETE FROM processed_updates WHERE update_id NOT IN (SELECT update_id FROM processed_updates ORDER BY update_id DESC LIMIT 1000)")
     if update.get("callback_query"):
         return handle_callback(update["callback_query"])
     message = update.get("message") or {}
