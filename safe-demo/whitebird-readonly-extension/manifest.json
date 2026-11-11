@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "WhiteBird Manager — Local Read Only",
+  "version": "0.1.0",
+  "description": "Reads user-selected visible text on demand. No network access or credentials.",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
