@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>WhiteBird Manager — локальная проверка</title>
+<style>body{font:16px system-ui,Segoe UI,sans-serif;background:#f6f7fb;color:#172033;margin:0;padding:24px}.panel{max-width:510px;margin:35px auto;background:white;border:1px solid #ddd;border-radius:16px;padding:26px;box-shadow:0 8px 24px #0001}label{display:block;margin-top:15px;font-weight:600}input,select{box-sizing:border-box;width:100%;font:inherit;padding:11px;border:1px solid #aab1c1;border-radius:8px;margin-top:6px}button{background:#223aee;color:white;border:0;padding:12px 18px;border-radius:8px;font:inherit;cursor:pointer;margin-top:22px}p{line-height:1.5}.note{font-size:13px;color:#555}#result{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:18px}</style></head><body><main class="panel">
+<h2>WhiteBird Manager</h2><p>Локальная проверка одного профиля Octo. Открой WhiteBird отдельно и укажи увиденный результат.</p>
+<label for="profile">Название профиля (без почты)</label><input id="profile" maxlength="60" placeholder="Например, Octo 1">
+<label for="state">Состояние WhiteBird</label><select id="state"><option value="authorized">Авторизован, баланс виден</option><option value="login_required">Требуется повторный вход</option><option value="balance_hidden">Баланс скрыт</option></select>
+<section id="amounts"><label for="rub">RUB</label><input id="rub" inputmode="decimal" placeholder="0.00"><label for="usdt">USDT</label><input id="usdt" inputmode="decimal" placeholder="0.00"></section>
+<button type="button" id="save">Сохранить результат в файл</button>
+<p id="result" role="status"></p><p class="note">Без установки Python. Не подключается к WhiteBird, Telegram или Octo. Не вводи пароль, 2FA и cookies. Файл результата может содержать финансовые данные — храни его приватно.</p>
+</main><script>
+const $=id=>document.getElementById(id);
+$('state').addEventListener('change',()=>{$('amounts').hidden=$('state').value!=='authorized';});
+function amount(raw){const s=raw.trim().replace(/\s/g,'').replace(',','.');if(!/^\d{1,12}(\.\d{1,8})?$/.test(s))throw Error('Укажи корректную неотрицательную сумму.');return s;}
+$('save').addEventListener('click',()=>{
+try{const label=$('profile').value.trim();if(!label||label.length>60)throw Error('Укажи короткое название профиля.');
+const status=$('state').value;
+const data={account_label:label,status,observed_at:new Date().toISOString(),source:'manual_user_observation'};
+if(status==='authorized'){data.rub=amount($('rub').value);data.usdt=amount($('usdt').value);}
+const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='whitebird_local_observation.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+$('result').textContent='Файл сохранён через браузер. Данные никуда не отправлялись.';
+}catch(e){$('result').textContent=e.message;}
+});
+</script></body></html>
