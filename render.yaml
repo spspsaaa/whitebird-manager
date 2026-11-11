@@ -1,0 +1,22 @@
+services:
+  - type: web_service
+    name: whitebird-manager
+    runtime: python
+    plan: starter
+    region: frankfurt
+    repo: https://github.com/spspsaaa/whitebird-manager
+    branch: main
+    buildCommand: pip install -r requirements.txt && playwright install --with-deps chromium
+    startCommand: python -m app.main
+    healthCheckPath: /health
+    disk:
+      name: whitebird-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.3"
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:////var/data/whitebird.db
+      - key: TOKEN_STORE_DIR
+        value: /var/data/tokens
