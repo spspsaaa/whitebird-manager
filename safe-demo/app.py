@@ -242,6 +242,7 @@ def sync_from_telegram(chat_id):
     text = pinned.get("text", "")
     if text.startswith(BACKUP_PREFIX):
         snapshot = json.loads(text[len(BACKUP_PREFIX):])
+        profiles_snapshot = snapshot.get("profiles", []) if isinstance(snapshot, dict) else []
         if isinstance(snapshot, dict):
             if snapshot.get("seeded"):
                 SEED_DONE.add(chat_id)
@@ -256,6 +257,12 @@ def sync_from_telegram(chat_id):
         with db() as connection:
             connection.execute("DELETE FROM accounts")
             connection.executemany("INSERT INTO accounts(id, name) VALUES (?, ?)", restored)
+            if isinstance(profiles_snapshot, list) and len(profiles_snapshot) <= 100:
+                for entry in profiles_snapshot:
+                    if (isinstance(entry, list) and len(entry) == 3 and isinstance(entry[0], int)
+                        and entry[1] in ("dolphin", "octo") and isinstance(entry[2], str)
+                        and 1 <= len(entry[2]) <= 120):
+                        connection.execute("INSERT OR IGNORE INTO browser_profiles(account_id,browser,profile_id) VALUES(?,?,?)", tuple(entry))
     SYNCED_CHATS.add(chat_id)
     if chat_id not in SEED_DONE:
         existing = accounts()
@@ -270,7 +277,9 @@ def sync_from_telegram(chat_id):
         save_to_telegram(chat_id)
 
 def save_to_telegram(chat_id):
-    content = BACKUP_PREFIX + json.dumps({"seeded": True, "accounts": [[i, n] for i, n in accounts()]}, ensure_ascii=False, separators=(",", ":"))
+    with db() as connection:
+        profiles = [list(row) for row in connection.execute("SELECT account_id,browser,profile_id FROM browser_profiles ORDER BY account_id")]
+    content = BACKUP_PREFIX + json.dumps({"seeded": True, "accounts": [[i, n] for i, n in accounts()], "profiles": profiles}, ensure_ascii=False, separators=(",", ":"))
     chat_info = telegram_api("getChat", {"chat_id": chat_id})
     pinned = chat_info.get("pinned_message") or {}
     if (pinned.get("text") or "").startswith(BACKUP_PREFIX):
@@ -335,6 +344,7 @@ def handle_update(update):
                 except (ValueError, sqlite3.IntegrityError):
                     return reply(chat_id, "Ошибка привязки: Dolphin — максимум 4 профиля, ID должен быть уникальным.")
                 STATES.pop(chat_id, None)
+                save_to_telegram(chat_id)
                 account_detail(chat_id, account_id)
             elif action == "edit":
                 with db() as connection:
