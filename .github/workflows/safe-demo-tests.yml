@@ -1,0 +1,24 @@
+name: Safe demo checks
+on:
+  push:
+    branches: [safe-telegram-demo-render]
+    paths:
+      - "safe-demo/**"
+      - ".github/workflows/safe-demo-tests.yml"
+  pull_request:
+    paths:
+      - "safe-demo/**"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Syntax check
+        run: python -m compileall -q safe-demo
+      - name: Unit tests
+        run: python -m unittest discover -s safe-demo -p 'test_*.py' -v
