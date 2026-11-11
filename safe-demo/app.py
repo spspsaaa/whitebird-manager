@@ -21,6 +21,7 @@ def db():
     connection.execute("CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)")
     connection.execute("CREATE TABLE IF NOT EXISTS processed_updates (update_id INTEGER PRIMARY KEY, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
     connection.execute("CREATE TABLE IF NOT EXISTS browser_profiles (account_id INTEGER PRIMARY KEY, browser TEXT NOT NULL, profile_id TEXT NOT NULL, UNIQUE(browser,profile_id))")
+    connection.execute("CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, action TEXT NOT NULL, account_id INTEGER)")
     return connection
 
 def accounts():
@@ -40,6 +41,35 @@ def bind_profile(account_id, browser, profile_id):
             if count >= 4:
                 raise ValueError("Dolphin limit")
         connection.execute("INSERT INTO browser_profiles(account_id,browser,profile_id) VALUES(?,?,?) ON CONFLICT(account_id) DO UPDATE SET browser=excluded.browser,profile_id=excluded.profile_id", (account_id,browser,profile_id))
+
+def readiness_report(chat_id):
+    rows = accounts()
+    with db() as connection:
+        links = dict((account_id, (browser, pid)) for account_id, browser, pid in connection.execute("SELECT account_id,browser,profile_id FROM browser_profiles"))
+    missing = [(i, name) for i, name in rows if i not in links]
+    dolphin = sum(1 for browser, _ in links.values() if browser == "dolphin")
+    octo = sum(1 for browser, _ in links.values() if browser == "octo")
+    lines = ["🧰 ДИАГНОСТИКА ПРОФИЛЕЙ", "", "Аккаунтов: " + str(len(rows)),
+             "Привязано: " + str(len(rows) - len(missing)),
+             "Dolphin: " + str(dolphin) + "/4", "Octo: " + str(octo),
+             "Без привязки: " + str(len(missing)), "",
+             "Браузеры на сервере не подключены. Балансы тестовые."]
+    if missing:
+        lines += ["", "Не привязаны (первые 20):"]
+        lines += [str(i) + ". " + name[:40] for i, name in missing[:20]]
+    reply(chat_id, "\n".join(lines))
+
+def audit_event(action, account_id=None):
+    with db() as connection:
+        connection.execute("INSERT INTO audit_log(action,account_id) VALUES (?,?)", (action, account_id))
+        connection.execute("DELETE FROM audit_log WHERE id NOT IN (SELECT id FROM audit_log ORDER BY id DESC LIMIT 500)")
+
+def audit_report(chat_id):
+    with db() as connection:
+        rows = connection.execute("SELECT created_at,action,account_id FROM audit_log ORDER BY id DESC LIMIT 15").fetchall()
+    lines = ["📋 ЖУРНАЛ ДЕЙСТВИЙ", "", "Последние 15 событий:"]
+    lines += [str(t) + " · " + action + ((" · #" + str(i)) if i is not None else "") for t,action,i in rows]
+    reply(chat_id, "\n".join(lines) if rows else "📋 Журнал пока пуст.")
 
 def reply(chat_id, text, inline=None):
     payload = {"chat_id": chat_id, "text": text,
@@ -216,6 +246,7 @@ def handle_callback(callback):
             with db() as connection:
                 connection.execute("DELETE FROM accounts WHERE id=?", (account_id,))
                 connection.execute("DELETE FROM browser_profiles WHERE account_id=?", (account_id,))
+            audit_event("account_deleted", account_id)
             save_to_telegram(chat_id)
             STATES.pop(chat_id, None)
             account_menu(chat_id, message_id)
@@ -315,6 +346,12 @@ def handle_update(update):
         elif raw == "/start":
             STATES.pop(chat_id, None)
             reply(chat_id, "Добро пожаловать! Выбери раздел ниже.")
+        elif raw == "/diagnostics":
+            STATES.pop(chat_id, None)
+            readiness_report(chat_id)
+        elif raw == "/journal":
+            STATES.pop(chat_id, None)
+            audit_report(chat_id)
         elif raw in ("Аккаунты 👥", "/accounts"):
             STATES.pop(chat_id, None)
             account_menu(chat_id)
@@ -336,6 +373,7 @@ def handle_update(update):
                     with db() as connection:
                         connection.execute("INSERT INTO accounts(name) VALUES (?)", (raw,))
                     save_to_telegram(chat_id)
+                    audit_event("account_added")
                     STATES.pop(chat_id, None)
                     account_menu(chat_id)
             elif action.startswith("profile:"):
@@ -344,12 +382,14 @@ def handle_update(update):
                 except (ValueError, sqlite3.IntegrityError):
                     return reply(chat_id, "Ошибка привязки: Dolphin — максимум 4 профиля, ID должен быть уникальным.")
                 STATES.pop(chat_id, None)
+                audit_event("profile_bound", account_id)
                 save_to_telegram(chat_id)
                 account_detail(chat_id, account_id)
             elif action == "edit":
                 with db() as connection:
                     connection.execute("UPDATE accounts SET name=? WHERE id=?", (raw, account_id))
                 save_to_telegram(chat_id)
+                audit_event("account_renamed", account_id)
                 STATES.pop(chat_id, None)
                 account_detail(chat_id, account_id)
         else:
