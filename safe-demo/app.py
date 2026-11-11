@@ -40,11 +40,23 @@ def show(chat_id, text, buttons, message_id=None):
             pass
     return telegram_api("sendMessage", payload)
 
-def account_menu(chat_id, message_id=None):
+def account_menu(chat_id, message_id=None, page=0):
     rows = accounts()
-    buttons = [[{"text": "👤 " + name[:45], "callback_data": "acc:" + str(i)}] for i, name in rows]
+    per_page = 8
+    pages = max(1, (len(rows) + per_page - 1) // per_page)
+    page = max(0, min(page, pages - 1))
+    start = page * per_page
+    buttons = [[{"text": "👤 " + name[:45], "callback_data": "acc:" + str(i)}] for i, name in rows[start:start + per_page]]
+    if pages > 1:
+        nav = []
+        if page > 0:
+            nav.append({"text": "◀️", "callback_data": "page:" + str(page - 1)})
+        nav.append({"text": str(page + 1) + "/" + str(pages), "callback_data": "page:" + str(page)})
+        if page + 1 < pages:
+            nav.append({"text": "▶️", "callback_data": "page:" + str(page + 1)})
+        buttons.append(nav)
     buttons.append([{"text": "➕ Добавить аккаунт", "callback_data": "add"}])
-    text = "👥 АККАУНТЫ\\n\\n" + (str(len(rows)) + " тестовых записей. Выбери аккаунт:" if rows else "Пока нет аккаунтов.")
+    text = "👥 АККАУНТЫ\\n\\n" + (str(len(rows)) + " тестовых записей · страница " + str(page + 1) + "/" + str(pages) if rows else "Пока нет аккаунтов.")
     show(chat_id, text, buttons, message_id)
 
 def account_detail(chat_id, account_id, message_id=None):
@@ -76,6 +88,9 @@ def handle_callback(callback):
         if data == "accounts":
             STATES.pop(chat_id, None)
             account_menu(chat_id, message_id)
+        elif data.startswith("page:") and data[5:].isdigit():
+            STATES.pop(chat_id, None)
+            account_menu(chat_id, message_id, int(data[5:]))
         elif data == "withdraw":
             STATES.pop(chat_id, None)
             withdrawal_menu(chat_id, message_id)
@@ -112,6 +127,7 @@ def handle_callback(callback):
             account_menu(chat_id, message_id)
 
 BACKUP_PREFIX = "DEMO_BACKUP_V1:"
+SEED_DONE = set()
 SYNCED_CHATS = set()
 
 def telegram_api(method, data):
@@ -132,7 +148,11 @@ def sync_from_telegram(chat_id):
     text = pinned.get("text", "")
     if text.startswith(BACKUP_PREFIX):
         snapshot = json.loads(text[len(BACKUP_PREFIX):])
-        if not isinstance(snapshot, list) or len(snapshot) > 20:
+        if isinstance(snapshot, dict):
+            if snapshot.get("seeded"):
+                SEED_DONE.add(chat_id)
+            snapshot = snapshot.get("accounts", [])
+        if not isinstance(snapshot, list) or len(snapshot) > 100:
             raise ValueError("Invalid backup")
         restored = []
         for entry in snapshot:
@@ -142,12 +162,21 @@ def sync_from_telegram(chat_id):
         with db() as connection:
             connection.execute("DELETE FROM accounts")
             connection.executemany("INSERT INTO accounts(id, name) VALUES (?, ?)", restored)
-    if not text.startswith(BACKUP_PREFIX) and accounts():
-        save_to_telegram(chat_id)
     SYNCED_CHATS.add(chat_id)
+    if chat_id not in SEED_DONE:
+        existing = accounts()
+        missing = max(0, 40 - len(existing))
+        if missing:
+            with db() as connection:
+                connection.executemany("INSERT INTO accounts(name) VALUES (?)",
+                    [("Демо-аккаунт " + str(n).zfill(2),) for n in range(1, missing + 1)])
+        SEED_DONE.add(chat_id)
+        save_to_telegram(chat_id)
+    elif not text.startswith(BACKUP_PREFIX) and accounts():
+        save_to_telegram(chat_id)
 
 def save_to_telegram(chat_id):
-    content = BACKUP_PREFIX + json.dumps([[i, n] for i, n in accounts()], ensure_ascii=False, separators=(",", ":"))
+    content = BACKUP_PREFIX + json.dumps({"seeded": True, "accounts": [[i, n] for i, n in accounts()]}, ensure_ascii=False, separators=(",", ":"))
     chat_info = telegram_api("getChat", {"chat_id": chat_id})
     pinned = chat_info.get("pinned_message") or {}
     if (pinned.get("text") or "").startswith(BACKUP_PREFIX):
@@ -185,9 +214,9 @@ def handle_update(update):
             if not 1 <= len(raw) <= 60 or raw.startswith("/"):
                 reply(chat_id, "Напиши название длиной от 1 до 60 символов.")
             elif action == "add":
-                if len(accounts()) >= 20:
+                if len(accounts()) >= 100:
                     STATES.pop(chat_id, None)
-                    reply(chat_id, "Достигнут лимит 20 тестовых аккаунтов.")
+                    reply(chat_id, "Достигнут лимит 100 тестовых аккаунтов.")
                 else:
                     with db() as connection:
                         connection.execute("INSERT INTO accounts(name) VALUES (?)", (raw,))
