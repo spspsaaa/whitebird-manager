@@ -14,9 +14,13 @@ WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
 DB_PATH = os.environ.get("DEMO_DB_PATH", "/tmp/telegram_demo.sqlite3")
 LOCK = threading.RLock()
 STATES = {}
-KEYBOARD = {"keyboard": [[{"text": "📊 Статус"}, {"text": "📋 Демо-аккаунты"}],
-                         [{"text": "➕ Добавить демо"}, {"text": "➖ Удалить демо"}],
-                         [{"text": "❓ Помощь"}]], "resize_keyboard": True}
+KEYBOARD = {"keyboard": [
+    [{"text": "📊 Статус"}, {"text": "📋 Демо-аккаунты"}],
+    [{"text": "➕ Добавить демо"}, {"text": "➖ Удалить демо"}],
+    [{"text": "✏️ Переименовать"}, {"text": "🔎 Поиск"}],
+    [{"text": "📤 Экспорт"}, {"text": "🗑 Очистить список"}],
+    [{"text": "❓ Помощь"}]
+], "resize_keyboard": True}
 
 def db():
     connection = sqlite3.connect(DB_PATH, timeout=10)
@@ -45,55 +49,94 @@ def handle_update(update):
     chat_id = chat["id"]
     raw = (message.get("text") or "").strip()
     command = raw.split(" ", 1)[0].split("@", 1)[0]
+    buttons = {
+        "➕ Добавить демо": ("add", "Напиши название новой тестовой записи (до 60 символов)."),
+        "➖ Удалить демо": ("delete", "Напиши номер записи для удаления."),
+        "✏️ Переименовать": ("rename_id", "Напиши номер записи для переименования."),
+        "🔎 Поиск": ("search", "Напиши часть названия для поиска."),
+        "🗑 Очистить список": ("clear", "Для подтверждения напиши ОЧИСТИТЬ. Любое другое сообщение отменит очистку."),
+    }
     with LOCK:
         rows = accounts()
+        ids = {id for id, _ in rows}
+        state = STATES.get(chat_id)
         if command == "/start":
             STATES.pop(chat_id, None)
-            answer = "Бот запущен. Выбирай действие кнопками ниже."
-        elif raw == "❌ Отмена" or command == "/cancel":
-            STATES.pop(chat_id, None)
-            answer = "Действие отменено."
+            answer = "Демо-бот готов. Все действия доступны через меню."
         elif command == "/status" or raw == "📊 Статус":
-            answer = "🟢 Сервер работает. Тестовых записей: " + str(len(rows))
+            STATES.pop(chat_id, None)
+            answer = "🟢 Сервер работает. Тестовых записей: " + str(len(rows)) + "/20."
         elif command == "/accounts" or raw == "📋 Демо-аккаунты":
-            answer = ("Демо-аккаунтов пока нет." if not rows else
-                      "Тестовые записи:\n" + "\\n".join(str(id) + ". " + name for id, name in rows))
+            STATES.pop(chat_id, None)
+            answer = "Тестовых записей нет." if not rows else "Тестовые записи:\n" + "\\n".join(str(i) + ". " + n for i, n in rows)
         elif command == "/help" or raw == "❓ Помощь":
-            answer = ("Используй кнопки для создания и удаления тестовых записей.\n"
-                      "Данные сохраняются в локальную SQLite-базу, но могут пропасть после перезапуска Render Free.\n"
-                      "Реальные аккаунты и платежи не подключены.")
-        elif raw == "➕ Добавить демо":
-            STATES[chat_id] = "add"
-            answer = "Напиши название новой тестовой записи (до 60 символов)."
-        elif raw == "➖ Удалить демо":
-            STATES[chat_id] = "delete"
-            answer = ("Удалять пока нечего." if not rows else
-                      "Отправь номер записи для удаления:\n" +
-                      "\\n".join(str(id) + ". " + name for id, name in rows))
-            if not rows:
+            STATES.pop(chat_id, None)
+            answer = ("Создавай, удаляй, переименовывай и ищи тестовые записи кнопками.\n"
+                      "Экспорт выдаёт текстовый список для копирования.\n"
+                      "Данные в SQLite на Render Free могут пропасть при перезапуске или развёртывании.\n"
+                      "Никаких реальных аккаунтов или финансовых операций.")
+        elif raw == "📤 Экспорт":
+            STATES.pop(chat_id, None)
+            answer = ("Список пуст." if not rows else
+                      "Экспорт тестовых записей (ID;Название):\n" +
+                      "\\n".join(str(i) + ";" + n.replace(";", ",").replace("\n", " ") for i, n in rows))
+        elif raw in buttons:
+            new_state, answer = buttons[raw]
+            if not rows and new_state in ("delete", "rename_id", "clear"):
                 STATES.pop(chat_id, None)
-        elif STATES.get(chat_id) == "add" or command == "/adddemo":
+                answer = "Список пуст — сначала добавь запись."
+            else:
+                STATES[chat_id] = new_state
+                if new_state in ("delete", "rename_id"):
+                    answer += "\n" + "\\n".join(str(i) + ". " + n for i, n in rows)
+        elif command == "/adddemo" or state == "add":
             name = raw.partition(" ")[2].strip() if command == "/adddemo" else raw
-            if not name or len(name) > 60 or name.startswith("/"):
-                answer = "Название должно быть от 1 до 60 символов. Или нажми «Отмена»."
+            if not 1 <= len(name) <= 60 or name.startswith("/"):
+                answer = "Напиши название от 1 до 60 символов."
             elif len(rows) >= 20:
                 STATES.pop(chat_id, None)
-                answer = "Лимит — 20 тестовых записей."
+                answer = "Лимит — 20 записей."
             else:
                 with db() as connection:
-                    cursor = connection.execute("INSERT INTO accounts(name) VALUES (?)", (name,))
-                    number = cursor.lastrowid
+                    number = connection.execute("INSERT INTO accounts(name) VALUES (?)", (name,)).lastrowid
                 STATES.pop(chat_id, None)
                 answer = "Добавлена тестовая запись №" + str(number) + ": " + name
-        elif STATES.get(chat_id) == "delete" or command == "/removedemo":
-            arg = raw.partition(" ")[2].strip() if command == "/removedemo" else raw
-            if not arg.isdigit() or int(arg) not in {id for id, _ in rows}:
-                answer = "Отправь номер из списка или нажми «Отмена»."
+        elif command == "/removedemo" or state == "delete":
+            value = raw.partition(" ")[2].strip() if command == "/removedemo" else raw
+            if not value.isdigit() or int(value) not in ids:
+                answer = "Напиши номер существующей записи."
             else:
                 with db() as connection:
-                    connection.execute("DELETE FROM accounts WHERE id = ?", (int(arg),))
+                    connection.execute("DELETE FROM accounts WHERE id=?", (int(value),))
                 STATES.pop(chat_id, None)
-                answer = "Тестовая запись №" + arg + " удалена."
+                answer = "Тестовая запись №" + value + " удалена."
+        elif state == "rename_id":
+            if not raw.isdigit() or int(raw) not in ids:
+                answer = "Напиши номер существующей записи."
+            else:
+                STATES[chat_id] = ("rename_name", int(raw))
+                answer = "Напиши новое название (до 60 символов)."
+        elif isinstance(state, tuple) and state[0] == "rename_name":
+            if not 1 <= len(raw) <= 60 or raw.startswith("/"):
+                answer = "Напиши название от 1 до 60 символов."
+            else:
+                with db() as connection:
+                    connection.execute("UPDATE accounts SET name=? WHERE id=?", (raw, state[1]))
+                STATES.pop(chat_id, None)
+                answer = "Запись №" + str(state[1]) + " переименована: " + raw
+        elif state == "search":
+            STATES.pop(chat_id, None)
+            matches = [(i, n) for i, n in rows if raw.casefold() in n.casefold()]
+            answer = ("Ничего не найдено." if not matches else
+                      "Результаты поиска:\n" + "\\n".join(str(i) + ". " + n for i, n in matches))
+        elif state == "clear":
+            STATES.pop(chat_id, None)
+            if raw == "ОЧИСТИТЬ":
+                with db() as connection:
+                    connection.execute("DELETE FROM accounts")
+                answer = "Все тестовые записи удалены."
+            else:
+                answer = "Очистка отменена."
         else:
             answer = "Выбери действие в меню."
     reply(chat_id, answer)
