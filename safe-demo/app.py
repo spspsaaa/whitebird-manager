@@ -192,11 +192,13 @@ def withdrawal_preview(chat_id, account_id, message_id=None):
     row = next(((i, name) for i, name in accounts() if i == account_id), None)
     if row is None:
         return withdrawal_account_menu(chat_id, message_id)
-    rub, usdt = demo_balances(account_id)
-    show(chat_id, "💳 ДЕМО-ВЫВОД — ПРЕДПРОСМОТР\n\nАккаунт: " + row[1] +
-         f"\nТестовый RUB: {rub:,.2f} ₽\nТестовый USDT: {usdt:,.2f} USDT" +
-         "\n\nРеальные переводы недоступны. Эта функция не может отправлять средства.",
-         [[{"text": "⬅️ Выбор аккаунта", "callback_data": "withdraw:single"}]], message_id)
+    STATES[chat_id] = ("draft_currency", account_id)
+    show(chat_id, "💳 ЗАЯВКА НА ВЫВОД — ЧЕРНОВИК\\n\\nАккаунт: " + row[1] +
+         "\\nВыбери валюту. Реальные операции отключены.",
+         [[{"text": "RUB.wb", "callback_data": "draft:rub:" + str(account_id)},
+           {"text": "USDT", "callback_data": "draft:usdt:" + str(account_id)}],
+          [{"text": "⬅️ Назад", "callback_data": "withdraw:single"}]], message_id)
+
 
 def account_detail(chat_id, account_id, message_id=None):
     row = next(((i, n) for i, n in accounts() if i == account_id), None)
@@ -243,6 +245,15 @@ def handle_callback(callback):
             withdrawal_account_menu(chat_id, message_id, int(data[6:]))
         elif data.startswith("wacc:") and data[5:].isdigit():
             withdrawal_preview(chat_id, int(data[5:]), message_id)
+        elif data.startswith("draft:"):
+            parts = data.split(":")
+            if len(parts) == 3 and parts[1] in ("rub", "usdt") and parts[2].isdigit():
+                account_id = int(parts[2])
+                if account_id in {i for i, _ in accounts()}:
+                    currency = "RUB.wb" if parts[1] == "rub" else "USDT"
+                    STATES[chat_id] = ("draft_amount:" + currency, account_id)
+                    show(chat_id, "Введи сумму " + currency + " для черновика заявки.\\nРеальные переводы отключены.",
+                         [[{"text": "⬅️ Назад", "callback_data": "wacc:" + str(account_id)}]], message_id)
         elif data == "withdraw:bulk":
             show(chat_id, "💳 МАССОВЫЙ ДЕМО-ВЫВОД\n\nТестовый сценарий. Реальные переводы отключены.",
                  [[{"text": "⬅️ Назад", "callback_data": "withdraw"}]], message_id)
@@ -423,6 +434,27 @@ def _dispatch_update(update):
             withdrawal_menu(chat_id)
         elif isinstance(STATES.get(chat_id), tuple):
             action, account_id = STATES[chat_id]
+            if action.startswith("draft_amount:"):
+                currency = action.split(":", 1)[1]
+                normalized = raw.replace(",", ".")
+                if not re.fullmatch(r"(?:0|[1-9][0-9]{0,11})(?:\\.[0-9]{1,8})?", normalized) or not 0 < float(normalized) <= 1000000000000:
+                    return reply(chat_id, "Введи положительную сумму числом, например 100 или 0.5.")
+                STATES[chat_id] = ("draft_recipient:" + currency + ":" + normalized, account_id)
+                return reply(chat_id, "Введи обозначение получателя для черновика (без паролей, кодов и секретов).")
+            if action.startswith("draft_recipient:"):
+                if not 1 <= len(raw) <= 120 or raw.startswith("/"):
+                    return reply(chat_id, "Обозначение получателя — от 1 до 120 символов.")
+                _, currency, amount = action.split(":", 2)
+                row = next(((i, n) for i, n in accounts() if i == account_id), None)
+                STATES.pop(chat_id, None)
+                if row is None:
+                    return reply(chat_id, "Аккаунт больше не найден.")
+                audit_event("withdrawal_draft_prepared", account_id)
+                return reply(chat_id, "📋 ЧЕРНОВИК ЗАЯВКИ\\n\\nАккаунт: " + row[1] +
+                             "\\nВалюта: " + currency + "\\nСумма: " + amount +
+                             "\\nПолучатель: " + raw +
+                             "\\n\\nЭто только предварительный просмотр. Комиссия и доступный баланс не проверены. " +
+                             "Кнопки подтверждения и отправки денег нет.")
             limit = 120 if action.startswith("profile:") else 60
             if not 1 <= len(raw) <= limit or raw.startswith("/"):
                 reply(chat_id, "Недопустимый ввод. Название — до 60 символов, ID профиля — до 120.")
