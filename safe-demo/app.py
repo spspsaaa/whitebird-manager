@@ -18,12 +18,28 @@ KEYBOARD = {"keyboard": [[{"text": "Вывод средств 💳"}, {"text": "
 
 def db():
     connection = sqlite3.connect(DB_PATH, timeout=10)
-    connection.execute("CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)")\n    connection.execute("CREATE TABLE IF NOT EXISTS processed_updates (update_id INTEGER PRIMARY KEY, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+    connection.execute("CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL")
+    connection.execute("CREATE TABLE IF NOT EXISTS processed_updates (update_id INTEGER PRIMARY KEY, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+    connection.execute("CREATE TABLE IF NOT EXISTS browser_profiles (account_id INTEGER PRIMARY KEY, browser TEXT NOT NULL, profile_id TEXT NOT NULL, UNIQUE(browser,profile_id))")
     return connection
 
 def accounts():
     with db() as connection:
         return connection.execute("SELECT id, name FROM accounts ORDER BY id").fetchall()
+
+def profile(account_id):
+    with db() as connection:
+        return connection.execute("SELECT browser, profile_id FROM browser_profiles WHERE account_id=?", (account_id,)).fetchone()
+
+def bind_profile(account_id, browser, profile_id):
+    if browser not in ("dolphin", "octo") or not 1 <= len(profile_id) <= 120:
+        raise ValueError("Invalid profile")
+    with db() as connection:
+        if browser == "dolphin":
+            count = connection.execute("SELECT COUNT(*) FROM browser_profiles WHERE browser='dolphin' AND account_id != ?", (account_id,)).fetchone()[0]
+            if count >= 4:
+                raise ValueError("Dolphin limit")
+        connection.execute("INSERT INTO browser_profiles(account_id,browser,profile_id) VALUES(?,?,?) ON CONFLICT(account_id) DO UPDATE SET browser=excluded.browser,profile_id=excluded.profile_id", (account_id,browser,profile_id))
 
 def reply(chat_id, text, inline=None):
     payload = {"chat_id": chat_id, "text": text,
@@ -123,8 +139,11 @@ def account_detail(chat_id, account_id, message_id=None):
     row = next(((i, n) for i, n in accounts() if i == account_id), None)
     if row is None:
         return account_menu(chat_id, message_id)
-    show(chat_id, "👤 АККАУНТ №" + str(row[0]) + "\nНазвание: " + row[1] + "\nРежим: демонстрация",
-         [[{"text": "✏️ Редактировать", "callback_data": "edit:" + str(account_id)},
+    linked = profile(account_id)
+    browser_label = (("Dolphin Anty" if linked[0] == "dolphin" else "Octo Browser") + " / " + linked[1]) if linked else "Не привязан"
+    show(chat_id, "👤 АККАУНТ №" + str(row[0]) + "\nНазвание: " + row[1] + "\nБраузер: " + browser_label + "\nРежим: демонстрация",
+         [[{"text": "🐬 Dolphin", "callback_data": "browser:dolphin:" + str(account_id)}, {"text": "🐙 Octo", "callback_data": "browser:octo:" + str(account_id)}],
+          [{"text": "✏️ Редактировать", "callback_data": "edit:" + str(account_id)},
            {"text": "🗑 Удалить", "callback_data": "delete:" + str(account_id)}],
           [{"text": "⬅️ К аккаунтам", "callback_data": "accounts"}]], message_id)
 
@@ -164,6 +183,14 @@ def handle_callback(callback):
         elif data == "withdraw:bulk":
             show(chat_id, "💳 МАССОВЫЙ ДЕМО-ВЫВОД\n\nТестовый сценарий. Реальные переводы отключены.",
                  [[{"text": "⬅️ Назад", "callback_data": "withdraw"}]], message_id)
+        elif data.startswith("browser:"):
+            parts = data.split(":")
+            if len(parts) == 3 and parts[1] in ("dolphin", "octo") and parts[2].isdigit():
+                account_id = int(parts[2])
+                if account_id in {i for i, _ in accounts()}:
+                    STATES[chat_id] = ("profile:" + parts[1], account_id)
+                    show(chat_id, "Отправь ID профиля браузера. Не присылай пароли и 2FA.",
+                         [[{"text": "⬅️ Назад", "callback_data": "acc:" + str(account_id)}]], message_id)
         elif data == "add":
             STATES[chat_id] = ("add", None)
             show(chat_id, "➕ НОВЫЙ АККАУНТ\n\nОтправь название обычным сообщением (до 60 символов).",
@@ -188,6 +215,7 @@ def handle_callback(callback):
             account_id = int(data.split(":")[1])
             with db() as connection:
                 connection.execute("DELETE FROM accounts WHERE id=?", (account_id,))
+                connection.execute("DELETE FROM browser_profiles WHERE account_id=?", (account_id,))
             save_to_telegram(chat_id)
             STATES.pop(chat_id, None)
             account_menu(chat_id, message_id)
@@ -292,6 +320,13 @@ def handle_update(update):
                     save_to_telegram(chat_id)
                     STATES.pop(chat_id, None)
                     account_menu(chat_id)
+            elif action.startswith("profile:"):
+                try:
+                    bind_profile(account_id, action.split(":")[1], raw)
+                except (ValueError, sqlite3.IntegrityError):
+                    return reply(chat_id, "Ошибка привязки: Dolphin — максимум 4 профиля, ID должен быть уникальным.")
+                STATES.pop(chat_id, None)
+                account_detail(chat_id, account_id)
             elif action == "edit":
                 with db() as connection:
                     connection.execute("UPDATE accounts SET name=? WHERE id=?", (raw, account_id))
