@@ -14,7 +14,7 @@ WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
 DB_PATH = os.environ.get("DEMO_DB_PATH", "/tmp/telegram_demo.sqlite3")
 LOCK = threading.RLock()
 STATES = {}
-KEYBOARD = {"keyboard": [[{"text": "Вывод средств 💳"}, {"text": "Аккаунты 👥"}]], "resize_keyboard": True}
+KEYBOARD = {"keyboard": [[{"text": "Вывод средств 💳"}, {"text": "Аккаунты 👥"}], [{"text": "Запросить балансы 💰"}]], "resize_keyboard": True}
 
 def db():
     connection = sqlite3.connect(DB_PATH, timeout=10)
@@ -61,6 +61,27 @@ def account_menu(chat_id, message_id=None, page=0):
     buttons.append([{"text": "➕ Добавить аккаунт", "callback_data": "add"}])
     text = "👥 АККАУНТЫ\\n\\n" + (str(len(rows)) + " тестовых записей · страница " + str(page + 1) + "/" + str(pages) if rows else "Пока нет аккаунтов.")
     show(chat_id, text, buttons, message_id)
+
+def demo_balance(account_id):
+    # Deterministic fictional USDT amount, never fetched from an external account.
+    return ((account_id * 7919 + 137) % 125000) / 100
+
+def balances_report(chat_id):
+    rows = accounts()
+    if not rows:
+        return reply(chat_id, "💰 ДЕМО-БАЛАНСЫ\\n\\nАккаунтов пока нет.")
+    total = sum(demo_balance(i) for i, _ in rows)
+    header = "💰 ДЕМО-БАЛАНСЫ (не реальные средства)\\n\\n"
+    footer = "\\nВсего аккаунтов: " + str(len(rows)) + "\\nИтого: " + f"{total:,.2f}" + " тестовых USDT"
+    lines = [f"{index:02d}. {name[:35]} — {demo_balance(i):,.2f} USDT" for index, (i, name) in enumerate(rows, 1)]
+    # Telegram messages have a length limit; split large reports safely.
+    chunk = header
+    for line in lines:
+        if len(chunk) + len(line) + len(footer) + 2 > 3500:
+            reply(chat_id, chunk.rstrip())
+            chunk = "💰 ДЕМО-БАЛАНСЫ (продолжение)\\n\\n"
+        chunk += line + "\\n"
+    reply(chat_id, chunk + footer)
 
 def account_detail(chat_id, account_id, message_id=None):
     row = next(((i, n) for i, n in accounts() if i == account_id), None)
@@ -209,6 +230,9 @@ def handle_update(update):
         elif raw in ("Аккаунты 👥", "/accounts"):
             STATES.pop(chat_id, None)
             account_menu(chat_id)
+        elif raw in ("Запросить балансы 💰", "/balances"):
+            STATES.pop(chat_id, None)
+            balances_report(chat_id)
         elif raw in ("Вывод средств 💳", "/withdraw"):
             STATES.pop(chat_id, None)
             withdrawal_menu(chat_id)
@@ -233,7 +257,7 @@ def handle_update(update):
                 STATES.pop(chat_id, None)
                 account_detail(chat_id, account_id)
         else:
-            reply(chat_id, "Выбери «Аккаунты 👥» или «Вывод средств 💳» в нижнем меню.")
+            reply(chat_id, "Выбери раздел в нижнем меню: аккаунты, вывод или балансы.")
 
 class Handler(BaseHTTPRequestHandler):
     def send_json(self, status, obj):
