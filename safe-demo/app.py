@@ -14,13 +14,7 @@ WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
 DB_PATH = os.environ.get("DEMO_DB_PATH", "/tmp/telegram_demo.sqlite3")
 LOCK = threading.RLock()
 STATES = {}
-KEYBOARD = {"keyboard": [
-    [{"text": "📊 Статус"}, {"text": "📋 Демо-аккаунты"}],
-    [{"text": "➕ Добавить демо"}, {"text": "➖ Удалить демо"}],
-    [{"text": "✏️ Переименовать"}, {"text": "🔎 Поиск"}],
-    [{"text": "📤 Экспорт"}, {"text": "🗑 Очистить список"}],
-    [{"text": "❓ Помощь"}]
-], "resize_keyboard": True}
+KEYBOARD = {"keyboard": [[{"text": "Вывод средств 💳"}, {"text": "Аккаунты 👥"}]], "resize_keyboard": True}
 
 def db():
     connection = sqlite3.connect(DB_PATH, timeout=10)
@@ -31,14 +25,91 @@ def accounts():
     with db() as connection:
         return connection.execute("SELECT id, name FROM accounts ORDER BY id").fetchall()
 
-def reply(chat_id, text):
-    if not TOKEN:
+def reply(chat_id, text, inline=None):
+    payload = {"chat_id": chat_id, "text": text,
+               "reply_markup": {"inline_keyboard": inline} if inline is not None else KEYBOARD}
+    return telegram_api("sendMessage", payload)
+
+def show(chat_id, text, buttons, message_id=None):
+    payload = {"chat_id": chat_id, "text": text, "reply_markup": {"inline_keyboard": buttons}}
+    if message_id is not None:
+        payload["message_id"] = message_id
+        try:
+            return telegram_api("editMessageText", payload)
+        except Exception:
+            pass
+    return telegram_api("sendMessage", payload)
+
+def account_menu(chat_id, message_id=None):
+    rows = accounts()
+    buttons = [[{"text": "👤 " + name[:45], "callback_data": "acc:" + str(i)}] for i, name in rows]
+    buttons.append([{"text": "➕ Добавить аккаунт", "callback_data": "add"}])
+    text = "👥 АККАУНТЫ\\n\\n" + (str(len(rows)) + " тестовых записей. Выбери аккаунт:" if rows else "Пока нет аккаунтов.")
+    show(chat_id, text, buttons, message_id)
+
+def account_detail(chat_id, account_id, message_id=None):
+    row = next(((i, n) for i, n in accounts() if i == account_id), None)
+    if row is None:
+        return account_menu(chat_id, message_id)
+    show(chat_id, "👤 АККАУНТ №" + str(row[0]) + "\\nНазвание: " + row[1] + "\\nРежим: демонстрация",
+         [[{"text": "✏️ Редактировать", "callback_data": "edit:" + str(account_id)},
+           {"text": "🗑 Удалить", "callback_data": "delete:" + str(account_id)}],
+          [{"text": "⬅️ К аккаунтам", "callback_data": "accounts"}]], message_id)
+
+def withdrawal_menu(chat_id, message_id=None):
+    show(chat_id, "💳 ВЫВОД СРЕДСТВ\\n\\nВыбери режим. Это только демонстрация, переводы не выполняются.",
+         [[{"text": "👤 Одиночный", "callback_data": "withdraw:single"}],
+          [{"text": "👥 Массовый", "callback_data": "withdraw:bulk"}]], message_id)
+
+def handle_callback(callback):
+    sender = callback.get("from") or {}
+    message = callback.get("message") or {}
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    if str(sender.get("id", "")) != OWNER or chat_id is None:
         return
-    payload = json.dumps({"chat_id": chat_id, "text": text, "reply_markup": KEYBOARD}).encode()
-    req = Request("https://api.telegram.org/bot" + TOKEN + "/sendMessage", data=payload,
-                  headers={"Content-Type": "application/json"}, method="POST")
-    with urlopen(req, timeout=8) as response:
-        response.read()
+    telegram_api("answerCallbackQuery", {"callback_query_id": callback["id"]})
+    data = callback.get("data", "")
+    message_id = message.get("message_id")
+    with LOCK:
+        sync_from_telegram(chat_id)
+        if data == "accounts":
+            STATES.pop(chat_id, None)
+            account_menu(chat_id, message_id)
+        elif data == "withdraw":
+            STATES.pop(chat_id, None)
+            withdrawal_menu(chat_id, message_id)
+        elif data.startswith("withdraw:"):
+            mode = "Одиночный" if data == "withdraw:single" else "Массовый"
+            show(chat_id, "💳 " + mode + " вывод\\n\\nДемонстрационный экран. Реальные операции отключены.",
+                 [[{"text": "⬅️ Назад", "callback_data": "withdraw"}]], message_id)
+        elif data == "add":
+            STATES[chat_id] = ("add", None)
+            show(chat_id, "➕ НОВЫЙ АККАУНТ\\n\\nОтправь название обычным сообщением (до 60 символов).",
+                 [[{"text": "⬅️ К аккаунтам", "callback_data": "accounts"}]], message_id)
+        elif data.startswith("acc:"):
+            STATES.pop(chat_id, None)
+            account_detail(chat_id, int(data.split(":")[1]), message_id)
+        elif data.startswith("edit:"):
+            account_id = int(data.split(":")[1])
+            if account_id not in {i for i, _ in accounts()}:
+                account_menu(chat_id, message_id)
+            else:
+                STATES[chat_id] = ("edit", account_id)
+                show(chat_id, "✏️ РЕДАКТИРОВАНИЕ\\n\\nОтправь новое название аккаунта.",
+                     [[{"text": "⬅️ Назад", "callback_data": "acc:" + str(account_id)}]], message_id)
+        elif data.startswith("delete:"):
+            account_id = int(data.split(":")[1])
+            show(chat_id, "Удалить тестовый аккаунт №" + str(account_id) + "?",
+                 [[{"text": "🗑 Да, удалить", "callback_data": "confirm:" + str(account_id)}],
+                  [{"text": "⬅️ Назад", "callback_data": "acc:" + str(account_id)}]], message_id)
+        elif data.startswith("confirm:"):
+            account_id = int(data.split(":")[1])
+            with db() as connection:
+                connection.execute("DELETE FROM accounts WHERE id=?", (account_id,))
+            save_to_telegram(chat_id)
+            STATES.pop(chat_id, None)
+            account_menu(chat_id, message_id)
 
 BACKUP_PREFIX = "DEMO_BACKUP_V1:"
 SYNCED_CHATS = set()
@@ -89,6 +160,8 @@ def save_to_telegram(chat_id):
     telegram_api("pinChatMessage", {"chat_id": chat_id, "message_id": sent["message_id"], "disable_notification": True})
 
 def handle_update(update):
+    if update.get("callback_query"):
+        return handle_callback(update["callback_query"])
     message = update.get("message") or {}
     sender = message.get("from") or {}
     chat = message.get("chat") or {}
@@ -96,106 +169,39 @@ def handle_update(update):
         return
     chat_id = chat["id"]
     raw = (message.get("text") or "").strip()
-    command = raw.split(" ", 1)[0].split("@", 1)[0]
-    buttons = {
-        "➕ Добавить демо": ("add", "Напиши название новой тестовой записи (до 60 символов)."),
-        "➖ Удалить демо": ("delete", "Напиши номер записи для удаления."),
-        "✏️ Переименовать": ("rename_id", "Напиши номер записи для переименования."),
-        "🔎 Поиск": ("search", "Напиши часть названия для поиска."),
-        "🗑 Очистить список": ("clear", "Для подтверждения напиши ОЧИСТИТЬ. Любое другое сообщение отменит очистку."),
-    }
     with LOCK:
         sync_from_telegram(chat_id)
-        rows = accounts()
-        changed = False
-        ids = {id for id, _ in rows}
-        state = STATES.get(chat_id)
-        if command == "/start":
+        if raw == "/start":
             STATES.pop(chat_id, None)
-            answer = "Демо-бот готов. Все действия доступны через меню."
-        elif command == "/status" or raw == "📊 Статус":
+            reply(chat_id, "Добро пожаловать! Выбери один из двух разделов ниже.")
+        elif raw in ("Аккаунты 👥", "/accounts"):
             STATES.pop(chat_id, None)
-            answer = "🟢 Сервер работает. Тестовых записей: " + str(len(rows)) + "/20."
-        elif command == "/accounts" or raw == "📋 Демо-аккаунты":
+            account_menu(chat_id)
+        elif raw in ("Вывод средств 💳", "/withdraw"):
             STATES.pop(chat_id, None)
-            answer = "Тестовых записей нет." if not rows else "Тестовые записи:\n" + "\\n".join(str(i) + ". " + n for i, n in rows)
-        elif command == "/help" or raw == "❓ Помощь":
-            STATES.pop(chat_id, None)
-            answer = ("Создавай, удаляй, переименовывай и ищи тестовые записи кнопками.\n"
-                      "Экспорт выдаёт текстовый список для копирования.\n"
-                      "Данные в SQLite на Render Free могут пропасть при перезапуске или развёртывании.\n"
-                      "Никаких реальных аккаунтов или финансовых операций.")
-        elif raw == "📤 Экспорт":
-            STATES.pop(chat_id, None)
-            answer = ("Список пуст." if not rows else
-                      "Экспорт тестовых записей (ID;Название):\n" +
-                      "\\n".join(str(i) + ";" + n.replace(";", ",").replace("\n", " ") for i, n in rows))
-        elif raw in buttons:
-            new_state, answer = buttons[raw]
-            if not rows and new_state in ("delete", "rename_id", "clear"):
-                STATES.pop(chat_id, None)
-                answer = "Список пуст — сначала добавь запись."
-            else:
-                STATES[chat_id] = new_state
-                if new_state in ("delete", "rename_id"):
-                    answer += "\n" + "\\n".join(str(i) + ". " + n for i, n in rows)
-        elif command == "/adddemo" or state == "add":
-            name = raw.partition(" ")[2].strip() if command == "/adddemo" else raw
-            if not 1 <= len(name) <= 60 or name.startswith("/"):
-                answer = "Напиши название от 1 до 60 символов."
-            elif len(rows) >= 20:
-                STATES.pop(chat_id, None)
-                answer = "Лимит — 20 записей."
-            else:
-                with db() as connection:
-                    number = connection.execute("INSERT INTO accounts(name) VALUES (?)", (name,)).lastrowid
-                changed = True
-                STATES.pop(chat_id, None)
-                answer = "Добавлена тестовая запись №" + str(number) + ": " + name
-        elif command == "/removedemo" or state == "delete":
-            value = raw.partition(" ")[2].strip() if command == "/removedemo" else raw
-            if not value.isdigit() or int(value) not in ids:
-                answer = "Напиши номер существующей записи."
-            else:
-                with db() as connection:
-                    connection.execute("DELETE FROM accounts WHERE id=?", (int(value),))
-                changed = True
-                STATES.pop(chat_id, None)
-                answer = "Тестовая запись №" + value + " удалена."
-        elif state == "rename_id":
-            if not raw.isdigit() or int(raw) not in ids:
-                answer = "Напиши номер существующей записи."
-            else:
-                STATES[chat_id] = ("rename_name", int(raw))
-                answer = "Напиши новое название (до 60 символов)."
-        elif isinstance(state, tuple) and state[0] == "rename_name":
+            withdrawal_menu(chat_id)
+        elif isinstance(STATES.get(chat_id), tuple):
+            action, account_id = STATES[chat_id]
             if not 1 <= len(raw) <= 60 or raw.startswith("/"):
-                answer = "Напиши название от 1 до 60 символов."
-            else:
+                reply(chat_id, "Напиши название длиной от 1 до 60 символов.")
+            elif action == "add":
+                if len(accounts()) >= 20:
+                    STATES.pop(chat_id, None)
+                    reply(chat_id, "Достигнут лимит 20 тестовых аккаунтов.")
+                else:
+                    with db() as connection:
+                        connection.execute("INSERT INTO accounts(name) VALUES (?)", (raw,))
+                    save_to_telegram(chat_id)
+                    STATES.pop(chat_id, None)
+                    account_menu(chat_id)
+            elif action == "edit":
                 with db() as connection:
-                    connection.execute("UPDATE accounts SET name=? WHERE id=?", (raw, state[1]))
-                changed = True
+                    connection.execute("UPDATE accounts SET name=? WHERE id=?", (raw, account_id))
+                save_to_telegram(chat_id)
                 STATES.pop(chat_id, None)
-                answer = "Запись №" + str(state[1]) + " переименована: " + raw
-        elif state == "search":
-            STATES.pop(chat_id, None)
-            matches = [(i, n) for i, n in rows if raw.casefold() in n.casefold()]
-            answer = ("Ничего не найдено." if not matches else
-                      "Результаты поиска:\n" + "\\n".join(str(i) + ". " + n for i, n in matches))
-        elif state == "clear":
-            STATES.pop(chat_id, None)
-            if raw == "ОЧИСТИТЬ":
-                with db() as connection:
-                    connection.execute("DELETE FROM accounts")
-                changed = True
-                answer = "Все тестовые записи удалены."
-            else:
-                answer = "Очистка отменена."
+                account_detail(chat_id, account_id)
         else:
-            answer = "Выбери действие в меню."
-        if changed:
-            save_to_telegram(chat_id)
-    reply(chat_id, answer)
+            reply(chat_id, "Выбери «Аккаунты 👥» или «Вывод средств 💳» в нижнем меню.")
 
 class Handler(BaseHTTPRequestHandler):
     def send_json(self, status, obj):
@@ -238,7 +244,7 @@ def register_webhook():
     payload = json.dumps({
         "url": "https://telegram-safe-demo.onrender.com/telegram",
         "secret_token": WEBHOOK_SECRET,
-        "allowed_updates": ["message"]
+        "allowed_updates": ["message", "callback_query"]
     }).encode()
     req = Request("https://api.telegram.org/bot" + TOKEN + "/setWebhook",
                   data=payload, headers={"Content-Type": "application/json"}, method="POST")
