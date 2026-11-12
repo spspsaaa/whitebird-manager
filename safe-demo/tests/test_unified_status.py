@@ -17,18 +17,20 @@ class UnifiedStatusTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             file = Path(tmp) / "accounts.json"
             file.write_text('{"accounts":[{"name":"One","browser":"octo","profile_id":"id-1"}]}', encoding="utf-8")
-            with patch.object(module, "octo_port_status", return_value="reachable"):
+            with patch.object(module, "octo_port_status", return_value="reachable"), \
+                 patch.object(module, "dolphin_port_status", return_value="unavailable"):
                 result = module.build_report(file)
         self.assertEqual(result["inventory"]["octo"], 1)
         self.assertEqual(result["octo_local_api"], "reachable")
-        self.assertEqual(result["dolphin_local_api"], "not_configured")
+        self.assertEqual(result["dolphin_local_api"], "unavailable")
         self.assertNotIn("id-1", str(result))
 
     def test_skip_network_check(self):
         with tempfile.TemporaryDirectory() as tmp:
             file = Path(tmp) / "accounts.json"
             file.write_text('{"accounts":[]}', encoding="utf-8")
-            with patch.object(module, "octo_port_status", side_effect=AssertionError("must not call")):
+            with patch.object(module, "octo_port_status", side_effect=AssertionError("must not call")), \
+                 patch.object(module, "dolphin_port_status", side_effect=AssertionError("must not call")):
                 result = module.build_report(file, check_port=False)
         self.assertEqual(result["octo_local_api"], "not_checked")
 
