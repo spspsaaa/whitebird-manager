@@ -59,7 +59,7 @@ class BotTests(unittest.TestCase):
         self.send("Recipient label")
         self.assertNotIn(chat, self.app.STATES)
         previews = [payload["text"] for method, payload in self.messages if method == "sendMessage"]
-        self.assertTrue(any("0.5" in p and "Recipient label" in p and "\\n" in p for p in previews))
+        self.assertTrue(any("0.5" in p and "Recipient label" in p and chr(10) in p for p in previews))
         self.assertFalse(any("transfer" in method.lower() for method, _ in self.messages))
 
     def test_invalid_amount_rejected(self):
