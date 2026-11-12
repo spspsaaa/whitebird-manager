@@ -11,12 +11,19 @@ Octo Browser (17 profiles) and Dolphin Anty (4 profiles) can be open simultaneou
 5. To see account names: `py -3 whitebird_agent.py accounts`.
 6. To select a profile: `py -3 whitebird_agent.py select "Account 01"`.
 
+## Local balance report
+
+1. Copy `balances.example.json` to `balances.json` on the Windows PC.
+2. Enter amounts observed in the WhiteBird wallet page for each named account. This does **not** automatically read a wallet.
+3. Run `py -3 whitebird_agent.py report` to show validated per-account balances, totals and accounts still missing observations.
+4. Keep `balances.json` private and local. Never commit it to GitHub.
+
 ## Current scope
 
 - Inventory validation and selection: implemented.
 - Independent TCP checks for Octo on 127.0.0.1:58888 and Dolphin on 127.0.0.1:3001: implemented. These are **port checks**, not authenticated API health checks.
 - Browser profile startup: **not implemented**. It requires confirming the installed browser versions and supported local API endpoints; no speculative requests are sent.
-- Real wallet balances: **not connected**. Existing extension can read visible wallet balances separately.
+- Balance report: **implemented** for manually observed values, with exact decimal totals. Automated extraction from WhiteBird is **not connected**.
 - Telegram bot: existing server demo is separate; **this Windows CLI is not yet connected to Telegram**.
 - Withdrawals: draft-only; no money movement.
 
