@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 OWNER = os.environ.get("TELEGRAM_OWNER_ID", "")
 WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
+AGENT_REPORT_SECRET = os.environ.get("AGENT_REPORT_SECRET", "")
 
 DB_PATH = os.environ.get("DEMO_DB_PATH", "/tmp/telegram_demo.sqlite3")
 LOCK = threading.RLock()
@@ -32,6 +33,7 @@ def db():
         connection.execute("ALTER TABLE processed_updates ADD COLUMN claimed_at INTEGER NOT NULL DEFAULT 0")
     connection.execute("CREATE TABLE IF NOT EXISTS browser_profiles (account_id INTEGER PRIMARY KEY, browser TEXT NOT NULL, profile_id TEXT NOT NULL, UNIQUE(browser,profile_id))")
     connection.execute("CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, action TEXT NOT NULL, account_id INTEGER)")
+    connection.execute("CREATE TABLE IF NOT EXISTS agent_balances (account_name TEXT PRIMARY KEY, rub TEXT NOT NULL, usdt TEXT NOT NULL, observed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
     return connection
 
 def accounts():
@@ -165,6 +167,48 @@ def balances_report(chat_id):
             chunk = "💰 ДЕМО-БАЛАНСЫ (продолжение)\n\n"
         chunk += line + "\n"
     reply(chat_id, chunk + footer)
+
+
+def store_agent_balances(data):
+    if not isinstance(data, dict) or not isinstance(data.get("balances"), list) or len(data["balances"]) > 100:
+        raise ValueError("Invalid report")
+    with db() as connection:
+        known = {name.strip().casefold() for _, name in connection.execute("SELECT id,name FROM accounts")}
+    seen = set()
+    validated = []
+    for item in data["balances"]:
+        if not isinstance(item, dict):
+            raise ValueError("Invalid item")
+        name = item.get("account")
+        if not isinstance(name, str) or not 1 <= len(name.strip()) <= 60 or name.strip().casefold() not in known:
+            raise ValueError("Unknown account")
+        key = name.strip().casefold()
+        if key in seen:
+            raise ValueError("Duplicate account")
+        seen.add(key)
+        values = []
+        for currency in ("RUB.wb", "USDT"):
+            value = item.get(currency)
+            if not isinstance(value, str) or not re.fullmatch(r"(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,8})?", value):
+                raise ValueError("Invalid amount")
+            values.append(value)
+        validated.append((name.strip(), *values))
+    with LOCK, db() as connection:
+        connection.executemany("INSERT INTO agent_balances(account_name,rub,usdt) VALUES (?,?,?) ON CONFLICT(account_name) DO UPDATE SET rub=excluded.rub,usdt=excluded.usdt,observed_at=CURRENT_TIMESTAMP", validated)
+    return len(validated)
+
+
+def observed_balances_report(chat_id):
+    with db() as connection:
+        rows = connection.execute("SELECT account_name,rub,usdt,observed_at FROM agent_balances ORDER BY account_name LIMIT 100").fetchall()
+    if not rows:
+        return reply(chat_id, "Нет данных от Windows-агента.")
+    lines = ["БАЛАНСЫ ИЗ ЛОКАЛЬНОГО ОТЧЁТА (не проверены WhiteBird)", ""]
+    lines.extend(name[:45] + ": " + rub + " RUB.wb / " + usdt + " USDT (" + timestamp + " UTC)" for name,rub,usdt,timestamp in rows)
+    message = "\n".join(lines)
+    for offset in range(0, len(message), 3500):
+        reply(chat_id, message[offset:offset + 3500])
+
 
 def withdrawal_account_menu(chat_id, message_id=None, page=0):
     rows = accounts()
@@ -426,6 +470,9 @@ def _dispatch_update(update):
         elif raw in ("Аккаунты 👥", "/accounts"):
             STATES.pop(chat_id, None)
             account_menu(chat_id)
+        elif raw == "/agent_balances":
+            STATES.pop(chat_id, None)
+            observed_balances_report(chat_id)
         elif raw in ("Запросить балансы 💰", "/balances"):
             STATES.pop(chat_id, None)
             balances_report(chat_id)
@@ -503,6 +550,21 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json(404, {"error": "not found"})
 
     def do_POST(self):
+        if urlparse(self.path).path == "/agent/balances":
+            if not AGENT_REPORT_SECRET or not hmac.compare_digest(
+                self.headers.get("X-WhiteBird-Agent-Secret", ""), AGENT_REPORT_SECRET
+            ):
+                return self.send_json(403, {"error": "forbidden"})
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 1 <= size <= 32768:
+                    return self.send_json(413, {"error": "invalid size"})
+                payload = json.loads(self.rfile.read(size))
+                return self.send_json(200, {"ok": True, "stored": store_agent_balances(payload)})
+            except (ValueError, json.JSONDecodeError):
+                return self.send_json(400, {"error": "invalid report"})
+            except Exception:
+                return self.send_json(503, {"error": "temporary failure"})
         if urlparse(self.path).path != "/telegram":
             return self.send_json(404, {"error": "not found"})
         if not WEBHOOK_SECRET or not hmac.compare_digest(
