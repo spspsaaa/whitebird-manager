@@ -9,6 +9,7 @@ from pathlib import Path
 from select_profile import select_account
 from unified_status import build_report
 from balance_import import validate_balances
+from agent_upload import upload_observations
 
 
 def main(argv=None):
@@ -19,6 +20,8 @@ def main(argv=None):
     sub.add_parser("accounts", help="List mapped account names and browsers")
     sub.add_parser("check", help="Run offline preflight checks and report missing inputs")
     report = sub.add_parser("report", help="Combine mapped accounts and manually observed balances")
+    upload = sub.add_parser("upload", help="Opt-in HTTPS upload of observed balances")
+    upload.add_argument("--balances", type=Path, default=Path(__file__).with_name("balances.json"))
     report.add_argument("--balances", type=Path, default=Path(__file__).with_name("balances.json"))
     choose = sub.add_parser("select", help="Resolve a named account to its local profile")
     choose.add_argument("name")
@@ -40,6 +43,9 @@ def main(argv=None):
             result = {"summary": summary, "accounts": [
                 {"name": row["name"], "browser": row["browser"]}
                 for row in data["accounts"]]}
+        elif args.command == "upload":
+            observations = json.loads(args.balances.read_text(encoding="utf-8-sig"))
+            result = upload_observations(observations, [row["name"] for row in data["accounts"]])
         elif args.command == "report":
             observations = json.loads(args.balances.read_text(encoding="utf-8-sig"))
             result = validate_balances(observations, [row["name"] for row in data["accounts"]])
