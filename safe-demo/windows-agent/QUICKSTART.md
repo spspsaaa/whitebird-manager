@@ -18,6 +18,10 @@ Octo Browser (17 profiles) and Dolphin Anty (4 profiles) can be open simultaneou
 3. Run `py -3 whitebird_agent.py report` to show validated per-account balances, totals and accounts still missing observations.
 4. Keep `balances.json` private and local. Never commit it to GitHub.
 
+## Telegram balance bridge
+
+After deploying the matching bot server, follow `BRIDGE-SETUP.md`. Run `py -3 whitebird_agent.py upload` to send only manually observed balances. The bot owner can use `/agent_balances` to view the report. This is opt-in, not an automatic wallet scan.
+
 ## Current scope
 
 - Inventory validation and selection: implemented.
