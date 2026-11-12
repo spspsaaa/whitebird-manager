@@ -32,6 +32,16 @@ class CLITests(unittest.TestCase):
     def test_unknown_selection(self):
         self.assertEqual(cli.main(["--inventory", str(self.path), "select", "Missing"]), 1)
 
+    def test_report(self):
+        balances = Path(self.tmp.name) / "balances.json"
+        balances.write_text(json.dumps({"balances": [{"account": "Octo A", "RUB.wb": "10.25", "USDT": "2.00"}]}), encoding="utf-8")
+        self.assertEqual(cli.main(["--inventory", str(self.path), "report", "--balances", str(balances)]), 0)
+
+    def test_report_rejects_unknown_account(self):
+        balances = Path(self.tmp.name) / "balances.json"
+        balances.write_text(json.dumps({"balances": [{"account": "Unknown", "RUB.wb": "1", "USDT": "1"}]}), encoding="utf-8")
+        self.assertEqual(cli.main(["--inventory", str(self.path), "report", "--balances", str(balances)]), 1)
+
     def test_status(self):
         with patch.object(cli, "build_report", return_value={"mode": "read_only"}):
             self.assertEqual(cli.main(["--inventory", str(self.path), "status"]), 0)
