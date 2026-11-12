@@ -17,6 +17,7 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("status", help="Check Octo and Dolphin local ports")
     sub.add_parser("accounts", help="List mapped account names and browsers")
+    sub.add_parser("check", help="Run offline preflight checks and report missing inputs")
     report = sub.add_parser("report", help="Combine mapped accounts and manually observed balances")
     report.add_argument("--balances", type=Path, default=Path(__file__).with_name("balances.json"))
     choose = sub.add_parser("select", help="Resolve a named account to its local profile")
@@ -28,6 +29,13 @@ def main(argv=None):
         summary = validate_inventory(data)
         if args.command == "status":
             result = build_report(args.inventory)
+        elif args.command == "check":
+            balance_file = args.inventory.with_name("balances.json")
+            result = {"inventory": summary, "balance_file_present": balance_file.is_file(),
+                      "profile_mapping_complete": summary["accounts"] == 21 and
+                      summary["octo"] == 17 and summary["dolphin"] == 4,
+                      "ready_for_live_browser_start": False,
+                      "next": "Verify installed Octo and Dolphin local API documentation before enabling profile start"}
         elif args.command == "accounts":
             result = {"summary": summary, "accounts": [
                 {"name": row["name"], "browser": row["browser"]}
