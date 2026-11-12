@@ -1,0 +1,14 @@
+{
+  "accounts": [
+    {
+      "name": "Account 01",
+      "browser": "octo",
+      "profile_id": "REPLACE_WITH_OCTO_PROFILE_ID"
+    },
+    {
+      "name": "Account 18",
+      "browser": "dolphin",
+      "profile_id": "REPLACE_WITH_DOLPHIN_PROFILE_ID"
+    }
+  ]
+}
