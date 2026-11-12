@@ -26,7 +26,15 @@ class BotTests(unittest.TestCase):
             self.app = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(self.app)
         self.messages = []
-        self.app.telegram_api = lambda method, payload: self.messages.append((method, payload)) or {"ok": True}
+        self.app.telegram_api = self.fake_telegram_api
+
+    def fake_telegram_api(self, method, payload):
+        self.messages.append((method, payload))
+        if method == "getChat":
+            return {}
+        if method == "sendMessage":
+            return {"message_id": len(self.messages)}
+        return True
 
     def add_account(self, name="Test account"):
         with self.app.db() as connection:
