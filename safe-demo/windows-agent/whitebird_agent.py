@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from select_profile import select_account
 from unified_status import build_report
+from balance_import import validate_balances
 
 
 def main(argv=None):
@@ -16,6 +17,8 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("status", help="Check Octo and Dolphin local ports")
     sub.add_parser("accounts", help="List mapped account names and browsers")
+    report = sub.add_parser("report", help="Combine mapped accounts and manually observed balances")
+    report.add_argument("--balances", type=Path, default=Path(__file__).with_name("balances.json"))
     choose = sub.add_parser("select", help="Resolve a named account to its local profile")
     choose.add_argument("name")
     args = parser.parse_args(argv)
@@ -29,6 +32,13 @@ def main(argv=None):
             result = {"summary": summary, "accounts": [
                 {"name": row["name"], "browser": row["browser"]}
                 for row in data["accounts"]]}
+        elif args.command == "report":
+            observations = json.loads(args.balances.read_text(encoding="utf-8-sig"))
+            result = validate_balances(observations, [row["name"] for row in data["accounts"]])
+            result["inventory"] = summary
+            result["missing_accounts"] = [row["name"] for row in data["accounts"]
+                                          if row["name"].strip().casefold() not in
+                                          {item["account"].strip().casefold() for item in result["balances"]}]
         else:
             selected = select_account(data, args.name)
             result = {"selection": selected,
