@@ -26,7 +26,18 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q safe-demo
       - name: Run isolated offline tests
-        run: python -m unittest discover -s safe-demo/tests -p 'test_*.py' -v
+        shell: bash
+        run: |
+          python -m unittest discover -s safe-demo/tests -p 'test_*.py' -v 2>&1 | tee test-results.txt
+          exit ${PIPESTATUS[0]}
+      - name: Upload test logs (including failures)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: test-results.txt
+          if-no-files-found: ignore
+          retention-days: 14
 
   powershell-syntax:
     runs-on: windows-latest
