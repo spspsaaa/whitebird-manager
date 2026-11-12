@@ -77,5 +77,42 @@ class BotTests(unittest.TestCase):
         self.assertEqual(self.messages, [])
 
 
+    def test_profile_change_requires_migration(self):
+        account = self.add_account()
+        self.app.bind_profile(account, "octo", "profile-1")
+        with self.assertRaises(ValueError):
+            self.app.bind_profile(account, "dolphin", "profile-2")
+
+    def test_unknown_account_profile_rejected(self):
+        with self.assertRaises(ValueError):
+            self.app.bind_profile(99999, "octo", "not-real")
+
+    def test_empty_and_oversized_profile_id_rejected(self):
+        account = self.add_account()
+        for profile_id in ("", " ", "x" * 121):
+            with self.subTest(profile_id_length=len(profile_id)):
+                with self.assertRaises(ValueError):
+                    self.app.bind_profile(account, "octo", profile_id)
+
+    def test_update_idempotency(self):
+        update = {
+            "update_id": 100,
+            "message": {"from": {"id": 123456789}, "chat": {"id": 123456789}, "text": "/start"},
+        }
+        self.app.handle_update(update)
+        count = len(self.messages)
+        self.app.handle_update(update)
+        self.assertEqual(len(self.messages), count)
+
+    def test_no_secret_required_for_offline_draft(self):
+        account = self.add_account()
+        chat = 123456789
+        self.app.STATES[chat] = ("draft_amount:RUB.wb", account)
+        self.send("100")
+        self.send("Saved recipient label")
+        all_messages = " ".join(str(item) for item in self.messages)
+        self.assertIn("Saved recipient label", all_messages)
+        self.assertNotIn("TELEGRAM_BOT_TOKEN", all_messages)
+
 if __name__ == "__main__":
     unittest.main()
