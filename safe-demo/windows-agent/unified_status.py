@@ -11,12 +11,20 @@ from pathlib import Path
 from inventory import validate_inventory
 
 
-def octo_port_status(host="127.0.0.1", port=58888, timeout=1.5):
+def local_port_status(host="127.0.0.1", port=58888, timeout=1.5):
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return "reachable"
     except (OSError, TimeoutError):
         return "unavailable"
+
+
+def octo_port_status():
+    return local_port_status(port=58888)
+
+
+def dolphin_port_status():
+    return local_port_status(port=3001)
 
 
 def build_report(inventory_path, check_port=True):
@@ -26,7 +34,7 @@ def build_report(inventory_path, check_port=True):
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "inventory": summary,
         "octo_local_api": octo_port_status() if check_port else "not_checked",
-        "dolphin_local_api": "not_configured",
+        "dolphin_local_api": dolphin_port_status() if check_port else "not_checked",
         "mode": "read_only",
     }
 
