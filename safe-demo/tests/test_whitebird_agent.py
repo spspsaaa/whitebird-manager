@@ -23,6 +23,9 @@ class CLITests(unittest.TestCase):
             {"name": "Dolphin B", "browser": "dolphin", "profile_id": "p2"}
         ]}), encoding="utf-8")
 
+    def test_preflight(self):
+        self.assertEqual(cli.main(["--inventory", str(self.path), "check"]), 0)
+
     def test_accounts(self):
         self.assertEqual(cli.main(["--inventory", str(self.path), "accounts"]), 0)
 
