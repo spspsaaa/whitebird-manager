@@ -1,0 +1,24 @@
+name: WhiteBird safe CI
+
+on:
+  push:
+    branches: [feature/secure-auth-approval]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile Python sources
+        run: python -m compileall -q safe-demo
+      - name: Run isolated offline tests
+        run: python -m unittest discover -s safe-demo/tests -p 'test_*.py' -v
