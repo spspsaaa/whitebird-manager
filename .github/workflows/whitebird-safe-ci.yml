@@ -49,3 +49,24 @@ jobs:
             exit 1
           }
           }
+
+  windows-diagnostic-package:
+    needs: [powershell-syntax, python-checks]
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create versioned diagnostic package
+        shell: pwsh
+        run: |
+          $source = 'safe-demo/windows-agent'
+          Compress-Archive -Path "$source/*" -DestinationPath 'WhiteBird-LocalDiagnostics.zip' -Force
+          (Get-FileHash 'WhiteBird-LocalDiagnostics.zip' -Algorithm SHA256).Hash |
+            Set-Content 'WhiteBird-LocalDiagnostics.sha256.txt'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whitebird-local-diagnostics
+          path: |
+            WhiteBird-LocalDiagnostics.zip
+            WhiteBird-LocalDiagnostics.sha256.txt
+          retention-days: 14
