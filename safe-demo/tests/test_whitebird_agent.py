@@ -23,6 +23,11 @@ class CLITests(unittest.TestCase):
             {"name": "Dolphin B", "browser": "dolphin", "profile_id": "p2"}
         ]}), encoding="utf-8")
 
+    def test_open_dispatch(self):
+        with patch.object(cli, "start_selected", return_value={"status": "start_requested"}) as start:
+            self.assertEqual(cli.main(["--inventory", str(self.path), "open", "Octo A"]), 0)
+            self.assertEqual(start.call_args.args[1], "Octo A")
+
     def test_preflight(self):
         self.assertEqual(cli.main(["--inventory", str(self.path), "check"]), 0)
 
