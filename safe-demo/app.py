@@ -437,7 +437,7 @@ def _dispatch_update(update):
             if action.startswith("draft_amount:"):
                 currency = action.split(":", 1)[1]
                 normalized = raw.replace(",", ".")
-                if not re.fullmatch(r"(?:0|[1-9][0-9]{0,11})(?:\\.[0-9]{1,8})?", normalized) or not 0 < float(normalized) <= 1000000000000:
+                if not re.fullmatch(r"(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,8})?", normalized) or not 0 < float(normalized) <= 1000000000000:
                     return reply(chat_id, "Введи положительную сумму числом, например 100 или 0.5.")
                 STATES[chat_id] = ("draft_recipient:" + currency + ":" + normalized, account_id)
                 return reply(chat_id, "Введи обозначение получателя для черновика (без паролей, кодов и секретов).")
@@ -450,10 +450,10 @@ def _dispatch_update(update):
                 if row is None:
                     return reply(chat_id, "Аккаунт больше не найден.")
                 audit_event("withdrawal_draft_prepared", account_id)
-                return reply(chat_id, "📋 ЧЕРНОВИК ЗАЯВКИ\\n\\nАккаунт: " + row[1] +
-                             "\\nВалюта: " + currency + "\\nСумма: " + amount +
-                             "\\nПолучатель: " + raw +
-                             "\\n\\nЭто только предварительный просмотр. Комиссия и доступный баланс не проверены. " +
+                return reply(chat_id, "📋 ЧЕРНОВИК ЗАЯВКИ\n\nАккаунт: " + row[1] +
+                             "\nВалюта: " + currency + "\nСумма: " + amount +
+                             "\nПолучатель: " + raw +
+                             "\n\nЭто только предварительный просмотр. Комиссия и доступный баланс не проверены. " +
                              "Кнопки подтверждения и отправки денег нет.")
             limit = 120 if action.startswith("profile:") else 60
             if not 1 <= len(raw) <= limit or raw.startswith("/"):
