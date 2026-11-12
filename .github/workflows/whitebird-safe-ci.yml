@@ -38,11 +38,12 @@ jobs:
         run: |
           $tokens = $null
           $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path 'safe-demo/windows-agent/check-octo-local.ps1').Path,
+          Get-ChildItem 'safe-demo/windows-agent' -Filter '*.ps1' | ForEach-Object {\n          $file = $_.FullName\n          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $file).Path,
             [ref]$tokens, [ref]$errors
           ) | Out-Null
           if ($errors.Count -gt 0) {
             $errors | ForEach-Object { Write-Error $_.Message }
             exit 1
+          }
           }
